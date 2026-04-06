@@ -18,10 +18,8 @@ use tauri::{AppHandle, Emitter, Manager};
 const STATUS_EVENT: &str = "clicker-status";
 
 fn migrate_old_config() {
-    let old_dir = dirs::data_dir()
-        .unwrap_or_default()
-        .join("blur009");
-    
+    let old_dir = dirs::data_dir().unwrap_or_default().join("blur009");
+
     if old_dir.exists() {
         let _ = std::fs::remove_dir_all(&old_dir);
     }
@@ -47,29 +45,30 @@ pub fn run() {
             if cfg!(debug_assertions) {
                 let _ = app.handle().plugin(
                     tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
+                        .level(log::LevelFilter::Debug)
                         .build(),
                 );
             }
 
-            migrate_old_config(); // Remove In 3 months from now (currently is 04/04/2026)
+            migrate_old_config(); // TODO: Remove In 3 months from now (currently is 04/04/2026) (also remove the function pls lol)
 
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 match updates::update_checker::check_for_updates(handle.clone()).await {
                     Ok(Some(result)) => {
                         if result.update_available {
-                            println!(
+                            log::info!(
                                 "[Updates] Update available: {} → {}",
-                                result.current_version, result.latest_version
+                                result.current_version,
+                                result.latest_version
                             );
                             let _ = handle.emit("update-available", &result);
                         } else {
-                            println!("[Updates] App is up to date (v{})", result.current_version);
+                            log::info!("[Updates] App is up to date (v{})", result.current_version);
                         }
                     }
-                    Ok(None) => println!("[Updates] Check returned none"),
-                    Err(e) => println!("[Updates] Check failed: {}", e),
+                    Ok(None) => log::info!("[Updates] Check returned none"),
+                    Err(e) => log::info!("[Updates] Check failed: {}", e),
                 }
             });
 
@@ -107,7 +106,7 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 let state = app_handle.state::<ClickerState>();
                 let settings = state.settings.lock().unwrap().clone();
-                println!("[Debug] telemetry_enabled = {}", settings.telemetry_enabled);
+                log::info!("[Debug] telemetry_enabled = {}", settings.telemetry_enabled);
                 if settings.telemetry_enabled {
                     let data = TelemetryData::from_settings(
                         &settings,
@@ -115,7 +114,7 @@ pub fn run() {
                     );
                     tauri::async_runtime::block_on(async {
                         if let Err(e) = send_settings_telemetry(data).await {
-                            eprintln!("[Telemetry] App close send failed: {}", e);
+                            log::error!("[Telemetry] App close send failed: {}", e);
                         }
                     });
                 }

@@ -161,7 +161,7 @@ fn read_all_runs() -> Result<Vec<RunRecord>, String> {
 
         if !verify_hash(&record, &key) {
             invalid_indices.push(runs.len());
-            eprintln!(
+            log::error!(
                 "[stats] Invalid hash on row id={}, marking for removal",
                 record.id
             );
@@ -172,7 +172,7 @@ fn read_all_runs() -> Result<Vec<RunRecord>, String> {
 
     // Remove invalid rows and rewrite the file
     if !invalid_indices.is_empty() {
-        eprintln!(
+        log::error!(
             "[stats] Found {} rows with invalid hashes, removing them",
             invalid_indices.len()
         );
@@ -183,7 +183,7 @@ fn read_all_runs() -> Result<Vec<RunRecord>, String> {
             .map(|(_, r)| r)
             .collect();
         if let Err(e) = write_all_runs(&valid_runs) {
-            eprintln!(
+            log::error!(
                 "[stats] Failed to rewrite file after removing invalid rows: {}",
                 e
             );
@@ -310,7 +310,7 @@ pub fn record_run(click_count: i64, elapsed_secs: f64, avg_cpu: f64, telemetry_e
     let mut runs = match read_all_runs() {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("[stats] Failed to read runs: {}", e);
+            log::error!("[stats] Failed to read runs: {}", e);
             return;
         }
     };
@@ -333,7 +333,7 @@ pub fn record_run(click_count: i64, elapsed_secs: f64, avg_cpu: f64, telemetry_e
     compact_runs(&mut runs);
 
     if let Err(e) = write_all_runs(&runs) {
-        eprintln!("[stats] Failed to save runs: {}", e);
+        log::error!("[stats] Failed to save runs: {}", e);
     }
 }
 
@@ -387,17 +387,17 @@ pub fn reset_stats() -> Result<CumulativeStats, String> {
 }
 
 pub fn print_run_stats(click_count: i64, elapsed_secs: f64, avg_cpu: f64) {
-    println!("╔══════════════════════════════════════╗");
-    println!("║          RUN STATISTICS              ║");
-    println!("╠══════════════════════════════════════╣");
-    println!("║  Clicks:  {:>20}       ║", click_count);
-    println!("║  Duration:   {:>17.1}s      ║", elapsed_secs);
+    log::info!("╔══════════════════════════════════════╗");
+    log::info!("║          RUN STATISTICS              ║");
+    log::info!("╠══════════════════════════════════════╣");
+    log::info!("║  Clicks:  {:>20}       ║", click_count);
+    log::info!("║  Duration:   {:>17.1}s      ║", elapsed_secs);
     if avg_cpu >= 0.0 {
-        println!("║  Avg CPU:    {:>17.1}%      ║", avg_cpu);
+        log::info!("║  Avg CPU:    {:>17.1}%      ║", avg_cpu);
     } else {
-        println!("║  Avg CPU:    {:>20}      ║", "N/A");
+        log::info!("║  Avg CPU:    {:>20}      ║", "N/A");
     }
-    println!("╚══════════════════════════════════════╝");
+    log::info!("╚══════════════════════════════════════╝");
 }
 
 pub fn get_unsent_runs() -> Vec<RunRecord> {

@@ -122,7 +122,7 @@ pub fn start_clicker_inner(app: &AppHandle) -> Result<ClickerStatusPayload, Stri
                     let _ = crate::engine::stats::mark_runs_sent(&ids);
                 }
                 Err(e) => {
-                    eprintln!("[telemetry] {}", e);
+                    log::error!("[telemetry] {}", e);
                 }
             }
         }
