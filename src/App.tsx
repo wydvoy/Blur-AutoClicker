@@ -256,23 +256,29 @@ export default function App() {
         console.error("Failed to size or place window:", err);
       }
     })();
-  }, [settings, settingsLoaded, tab, consentGiven]);
+  }, [settings, settingsLoaded, tab, consentGiven, updateInfo]);
 
   useEffect(() => {
-    invoke<{
-      currentVersion: string;
-      latestVersion: string;
-      updateAvailable: boolean;
-    }>("check_for_updates")
-      .then((result) => {
-        if (result?.updateAvailable) {
-          setUpdateInfo({
-            currentVersion: result.currentVersion,
-            latestVersion: result.latestVersion,
-          });
-        }
-      })
-      .catch((err) => console.error("Update check failed:", err));
+    const checkForUpdates = () => {
+      invoke<{
+        currentVersion: string;
+        latestVersion: string;
+        updateAvailable: boolean;
+      }>("check_for_updates")
+        .then((result) => {
+          if (result?.updateAvailable) {
+            setUpdateInfo({
+              currentVersion: result.currentVersion,
+              latestVersion: result.latestVersion,
+            });
+          }
+        })
+        .catch((err) => console.error("Update check failed:", err));
+    };
+
+    checkForUpdates();
+    const interval = setInterval(checkForUpdates, 60 * 60 * 1000);
+    return () => clearInterval(interval);
   }, []);
 
   const handleTabChange = (nextTab: Tab) => {
