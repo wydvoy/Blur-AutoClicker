@@ -24,9 +24,11 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(ClickerState {
             running: Arc::new(AtomicBool::new(false)),
+            run_generation: AtomicU64::new(0),
             settings: Mutex::new(ClickerSettings::default()),
             last_error: Mutex::new(None),
             stop_reason: Mutex::new(None),
@@ -120,7 +122,9 @@ pub fn run() {
                 if label == "main" {
                     crate::overlay::OVERLAY_THREAD_RUNNING
                         .store(false, std::sync::atomic::Ordering::SeqCst);
-                    std::process::exit(0);
+                    if let Some(overlay) = app_handle.get_webview_window("overlay") {
+                        let _ = overlay.destroy();
+                    }
                 }
             }
             if let tauri::RunEvent::ExitRequested { .. } = &event {
@@ -129,9 +133,6 @@ pub fn run() {
                 if let Some(overlay) = app_handle.get_webview_window("overlay") {
                     let _ = overlay.destroy();
                 }
-            }
-            if let tauri::RunEvent::Exit = event {
-                std::process::exit(0);
             }
         });
 }

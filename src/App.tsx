@@ -1,7 +1,19 @@
-import { useEffect, useRef, useState, lazy } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow, LogicalSize } from "@tauri-apps/api/window";
+import { lazy, useEffect, useRef, useState } from "react";
+import UpdateBanner from "./components/Updatebanner";
+import { canonicalizeHotkeyForBackend } from "./hotkeys";
+import {
+  APP_VERSION,
+  DEFAULT_SETTINGS,
+  type AppInfo,
+  type ClickerStatus,
+  type Settings,
+  clearSavedSettings,
+  loadSettings,
+  saveSettings,
+} from "./store";
 
 const SimplePanel = lazy(() => import("./components/panels/SimplePanel"));
 const AdvancedPanel = lazy(() => import("./components/panels/AdvancedPanel"));
@@ -11,19 +23,8 @@ const AdvancedPanelCompact = lazy(
   () => import("./components/panels/AdvancedPanelCompact"),
 );
 
-import { canonicalizeHotkeyForBackend } from "./hotkeys";
-import {
-  DEFAULT_SETTINGS,
-  type AppInfo,
-  type ClickerStatus,
-  type Settings,
-  clearSavedSettings,
-  loadSettings,
-  saveSettings,
-} from "./store";
-import UpdateBanner from "./components/Updatebanner";
-
 export type Tab = "simple" | "advanced" | "settings";
+const BACKEND_SETTINGS_SCHEMA_VERSION = 5;
 
 function getPanelSize(
   tab: Tab,
@@ -31,8 +32,7 @@ function getPanelSize(
   hasUpdate: boolean,
   hasAccessibilityBanner: boolean,
 ) {
-  const extra =
-    (hasUpdate ? 30 : 0) + (hasAccessibilityBanner ? 96 : 0);
+  const extra = (hasUpdate ? 30 : 0) + (hasAccessibilityBanner ? 96 : 0);
   if (tab === "settings") return { width: 500, height: 600 + extra };
   if (tab === "simple") return { width: 550, height: 175 + extra };
   return settings.explanationMode === "off"
@@ -48,7 +48,7 @@ const DEFAULT_STATUS: ClickerStatus = {
 };
 
 const DEFAULT_APP_INFO: AppInfo = {
-  version: "3.2.0",
+  version: APP_VERSION,
   updateStatus: "Update checks are disabled in development",
   screenshotProtectionSupported: false,
   platform: "unknown",
@@ -60,9 +60,14 @@ async function syncSettingsToBackend(settings: Settings) {
   await invoke("update_settings", {
     settings: {
       ...settings,
-      version: 5,
+      version: BACKEND_SETTINGS_SCHEMA_VERSION,
     },
   });
+}
+
+async function registerHotkeyCandidate(hotkey: string) {
+  const canonicalHotkey = await canonicalizeHotkeyForBackend(hotkey);
+  return invoke<string>("register_hotkey", { hotkey: canonicalHotkey });
 }
 
 function wait(ms: number) {
@@ -78,27 +83,29 @@ export default function App() {
   const [permissionAction, setPermissionAction] = useState<
     "request" | "open" | null
   >(null);
-  const hotkeyTimer = useRef<number | null>(null);
-  const settingsRef = useRef<Settings>(DEFAULT_SETTINGS);
-  const launchWindowPlacementDone = useRef(false);
-
   const [updateInfo, setUpdateInfo] = useState<{
     currentVersion: string;
     latestVersion: string;
   } | null>(null);
 
+  const hotkeyTimer = useRef<number | null>(null);
+  const hotkeyRequestIdRef = useRef(0);
+  const uiSettingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+  const committedSettingsRef = useRef<Settings>(DEFAULT_SETTINGS);
+  const lastValidHotkeyRef = useRef(DEFAULT_SETTINGS.hotkey);
+  const launchWindowPlacementDone = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const persistSettings = (nextSettings: Settings) => {
-    settingsRef.current = nextSettings;
+  const resizeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const setUiSettings = (nextSettings: Settings) => {
+    uiSettingsRef.current = nextSettings;
     setSettings(nextSettings);
+  };
 
-    if (!settingsLoaded) return;
-
-    syncSettingsToBackend(nextSettings).catch((err) => {
-      console.error("Failed to sync settings:", err);
-    });
-
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+  const scheduleSave = (nextSettings: Settings) => {
+    if (saveTimerRef.current) {
+      clearTimeout(saveTimerRef.current);
+    }
     saveTimerRef.current = setTimeout(() => {
       saveSettings(nextSettings).catch((err) => {
         console.error("Failed to save settings:", err);
@@ -106,8 +113,93 @@ export default function App() {
     }, 100);
   };
 
+  const persistCommittedSettings = (
+    nextCommittedSettings: Settings,
+    nextUiSettings: Settings,
+  ) => {
+    committedSettingsRef.current = nextCommittedSettings;
+    setUiSettings(nextUiSettings);
+
+    if (!settingsLoaded) {
+      return;
+    }
+
+    syncSettingsToBackend(nextCommittedSettings).catch((err) => {
+      console.error("Failed to sync settings:", err);
+    });
+    scheduleSave(nextCommittedSettings);
+  };
+
+  const restoreLastValidHotkey = () => {
+    const restoredHotkey = lastValidHotkeyRef.current;
+    if (uiSettingsRef.current.hotkey === restoredHotkey) {
+      return;
+    }
+
+    setUiSettings({
+      ...uiSettingsRef.current,
+      hotkey: restoredHotkey,
+    });
+  };
+
+  const queueHotkeyRegistration = (hotkey: string) => {
+    if (!settingsLoaded) {
+      return;
+    }
+
+    if (hotkeyTimer.current !== null) {
+      window.clearTimeout(hotkeyTimer.current);
+    }
+
+    const requestId = ++hotkeyRequestIdRef.current;
+    hotkeyTimer.current = window.setTimeout(() => {
+      hotkeyTimer.current = null;
+
+      registerHotkeyCandidate(hotkey)
+        .then((normalizedHotkey) => {
+          if (hotkeyRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          lastValidHotkeyRef.current = normalizedHotkey;
+          const nextCommittedSettings = {
+            ...committedSettingsRef.current,
+            hotkey: normalizedHotkey,
+          };
+          const nextUiSettings = {
+            ...uiSettingsRef.current,
+            hotkey: normalizedHotkey,
+          };
+
+          persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+        })
+        .catch((err) => {
+          if (hotkeyRequestIdRef.current !== requestId) {
+            return;
+          }
+
+          console.error("Failed to register hotkey:", err);
+          restoreLastValidHotkey();
+        });
+    }, 250);
+  };
+
   const updateSettings = (patch: Partial<Settings>) => {
-    persistSettings({ ...settingsRef.current, ...patch });
+    const { hotkey, ...rest } = patch;
+
+    if (Object.keys(rest).length > 0) {
+      const nextUiSettings = { ...uiSettingsRef.current, ...rest };
+      const nextCommittedSettings = { ...committedSettingsRef.current, ...rest };
+      persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+    }
+
+    if (hotkey !== undefined) {
+      setUiSettings({
+        ...uiSettingsRef.current,
+        hotkey,
+      });
+      queueHotkeyRegistration(hotkey);
+    }
   };
 
   const needsAccessibilityBanner =
@@ -125,7 +217,7 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
 
-    Promise.all([
+    void Promise.all([
       loadSettings(),
       invoke<AppInfo>("get_app_info"),
       invoke<ClickerStatus>("get_status"),
@@ -133,15 +225,23 @@ export default function App() {
       .then(async ([loadedSettings, loadedAppInfo, loadedStatus]) => {
         if (!mounted) return;
 
-        const canonicalHotkey = await canonicalizeHotkeyForBackend(
-          loadedSettings.hotkey,
-        );
+        let registeredHotkey = loadedSettings.hotkey;
+        try {
+          registeredHotkey = await registerHotkeyCandidate(loadedSettings.hotkey);
+        } catch (err) {
+          console.error("Failed to register saved hotkey:", err);
+          registeredHotkey = lastValidHotkeyRef.current;
+        }
+
         const hydratedSettings =
-          canonicalHotkey !== loadedSettings.hotkey
-            ? { ...loadedSettings, hotkey: canonicalHotkey }
+          registeredHotkey !== loadedSettings.hotkey
+            ? { ...loadedSettings, hotkey: registeredHotkey }
             : loadedSettings;
 
-        settingsRef.current = hydratedSettings;
+        lastValidHotkeyRef.current = hydratedSettings.hotkey;
+        uiSettingsRef.current = hydratedSettings;
+        committedSettingsRef.current = hydratedSettings;
+
         setTab(hydratedSettings.lastPanel);
         setSettings(hydratedSettings);
         setAppInfo(loadedAppInfo);
@@ -149,9 +249,8 @@ export default function App() {
         setSettingsLoaded(true);
 
         await syncSettingsToBackend(hydratedSettings);
-        await invoke("register_hotkey", { hotkey: hydratedSettings.hotkey });
 
-        if (canonicalHotkey !== loadedSettings.hotkey) {
+        if (hydratedSettings.hotkey !== loadedSettings.hotkey) {
           await saveSettings(hydratedSettings);
         }
       })
@@ -163,6 +262,15 @@ export default function App() {
 
     return () => {
       mounted = false;
+      if (hotkeyTimer.current !== null) {
+        window.clearTimeout(hotkeyTimer.current);
+      }
+      if (saveTimerRef.current) {
+        clearTimeout(saveTimerRef.current);
+      }
+      if (resizeTimeout.current) {
+        clearTimeout(resizeTimeout.current);
+      }
     };
   }, []);
 
@@ -184,44 +292,6 @@ export default function App() {
   }, [appInfo.accessibilityPermissionSupported]);
 
   useEffect(() => {
-    if (!settingsLoaded) return;
-
-    if (hotkeyTimer.current !== null) {
-      window.clearTimeout(hotkeyTimer.current);
-    }
-
-    hotkeyTimer.current = window.setTimeout(() => {
-      canonicalizeHotkeyForBackend(settings.hotkey)
-        .then((canonicalHotkey) =>
-          invoke<string>("register_hotkey", { hotkey: canonicalHotkey }).then(
-            (normalizedHotkey) => ({ canonicalHotkey, normalizedHotkey }),
-          ),
-        )
-        .then(({ canonicalHotkey, normalizedHotkey }) => {
-          const nextHotkey =
-            normalizedHotkey !== settingsRef.current.hotkey
-              ? normalizedHotkey
-              : canonicalHotkey !== settingsRef.current.hotkey
-                ? canonicalHotkey
-                : null;
-
-          if (nextHotkey) {
-            persistSettings({ ...settingsRef.current, hotkey: nextHotkey });
-          }
-        })
-        .catch((err) => {
-          console.error("Failed to register hotkey:", err);
-        });
-    }, 250);
-
-    return () => {
-      if (hotkeyTimer.current !== null) {
-        window.clearTimeout(hotkeyTimer.current);
-      }
-    };
-  }, [settings.hotkey, settingsLoaded]);
-
-  useEffect(() => {
     let cleanup: (() => void) | undefined;
 
     listen<ClickerStatus>("clicker-status", (event) => {
@@ -238,8 +308,6 @@ export default function App() {
       cleanup?.();
     };
   }, []);
-
-  const resizeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     if (resizeTimeout.current) {
@@ -293,7 +361,7 @@ export default function App() {
           root.style.width = `${currentW}px`;
           root.style.height = `${currentH}px`;
 
-          root.offsetHeight;
+          void root.offsetHeight;
 
           root.style.width = `${width}px`;
           root.style.height = `${height}px`;
@@ -335,20 +403,29 @@ export default function App() {
     setTab(nextTab);
 
     if (nextTab === "settings") return;
-    if (settingsRef.current.lastPanel === nextTab) return;
+    if (committedSettingsRef.current.lastPanel === nextTab) return;
 
-    persistSettings({
-      ...settingsRef.current,
+    updateSettings({
       lastPanel: nextTab,
     });
   };
 
   const handleResetSettings = async () => {
     try {
-      const resetSettings = await invoke<Settings>("reset_settings");
+      if (hotkeyTimer.current !== null) {
+        window.clearTimeout(hotkeyTimer.current);
+        hotkeyTimer.current = null;
+      }
+      hotkeyRequestIdRef.current += 1;
+
+      await invoke("reset_settings");
       await clearSavedSettings();
-      settingsRef.current = resetSettings;
-      setSettings(resetSettings);
+
+      lastValidHotkeyRef.current = DEFAULT_SETTINGS.hotkey;
+      committedSettingsRef.current = DEFAULT_SETTINGS;
+      uiSettingsRef.current = DEFAULT_SETTINGS;
+
+      setSettings(DEFAULT_SETTINGS);
       setTab("simple");
       launchWindowPlacementDone.current = false;
     } catch (err) {
@@ -414,6 +491,7 @@ export default function App() {
       />
       {updateInfo && (
         <UpdateBanner
+          key={`${updateInfo.currentVersion}:${updateInfo.latestVersion}`}
           currentVersion={updateInfo.currentVersion}
           latestVersion={updateInfo.latestVersion}
         />

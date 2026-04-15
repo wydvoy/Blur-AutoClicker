@@ -1,6 +1,5 @@
 use std::f64::consts::PI;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -24,6 +23,19 @@ use super::CLICK_COUNT;
 // changed from normal cpu measurement because it was not accurately
 // showing cpu usage for short clicker run times.
 
+fn cpu_percent_from_seconds(elapsed_secs: f64, cpu_seconds: f64) -> f64 {
+    if elapsed_secs < 0.001 || cpu_seconds <= 0.0 {
+        return -1.0;
+    }
+
+    let pct = (cpu_seconds / elapsed_secs) * 100.0;
+    if pct < 0.001 {
+        -1.0
+    } else {
+        pct
+    }
+}
+
 #[cfg(target_os = "windows")]
 windows_targets::link!(
     "kernel32.dll" "system" fn QueryThreadCycleTime(thread: *mut core::ffi::c_void, cycles: *mut u64) -> i32
@@ -43,13 +55,11 @@ fn thread_cycles() -> u64 {
     cycles
 }
 
-// Calibrates the CPU cycle frequency
 #[cfg(target_os = "windows")]
 fn calibrate_cycle_freq() -> f64 {
     let start_cycles = thread_cycles();
     let start = Instant::now();
 
-    // Spin for ~5ms
     while start.elapsed().as_millis() < 5 {
         std::hint::spin_loop();
     }
@@ -62,22 +72,141 @@ fn calibrate_cycle_freq() -> f64 {
         log::info!("CPU: calibrated at {:.0} MHz", freq / 1_000_000.0);
         freq
     } else {
-        3_000_000_000.0 // fallback 3 GHz
+        3_000_000_000.0
     }
 }
 
-#[cfg(not(target_os = "windows"))]
-#[inline]
-fn thread_cycles() -> u64 {
-    0
+#[cfg(target_os = "macos")]
+type IntegerT = i32;
+#[cfg(target_os = "macos")]
+type NaturalT = u32;
+#[cfg(target_os = "macos")]
+type KernReturnT = i32;
+#[cfg(target_os = "macos")]
+type MachPortT = NaturalT;
+#[cfg(target_os = "macos")]
+type MachMsgTypeNumberT = NaturalT;
+#[cfg(target_os = "macos")]
+type ThreadFlavorT = NaturalT;
+#[cfg(target_os = "macos")]
+type ThreadInspectT = MachPortT;
+#[cfg(target_os = "macos")]
+type ThreadInfoT = *mut IntegerT;
+#[cfg(target_os = "macos")]
+type PthreadT = *mut core::ffi::c_void;
+
+#[cfg(target_os = "macos")]
+const KERN_SUCCESS: KernReturnT = 0;
+#[cfg(target_os = "macos")]
+const THREAD_BASIC_INFO: ThreadFlavorT = 3;
+
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct TimeValueT {
+    seconds: IntegerT,
+    microseconds: IntegerT,
 }
 
-#[cfg(not(target_os = "windows"))]
-fn calibrate_cycle_freq() -> f64 {
-    0.0
+#[cfg(target_os = "macos")]
+#[repr(C)]
+struct ThreadBasicInfo {
+    user_time: TimeValueT,
+    system_time: TimeValueT,
+    cpu_usage: IntegerT,
+    policy: IntegerT,
+    run_state: IntegerT,
+    flags: IntegerT,
+    suspend_count: IntegerT,
+    sleep_time: IntegerT,
 }
 
-// -- Tauri-aware commands --
+#[cfg(target_os = "macos")]
+const THREAD_BASIC_INFO_COUNT: MachMsgTypeNumberT = (std::mem::size_of::<ThreadBasicInfo>()
+    / std::mem::size_of::<NaturalT>())
+    as MachMsgTypeNumberT;
+
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn pthread_self() -> PthreadT;
+    fn pthread_mach_thread_np(thread: PthreadT) -> MachPortT;
+    fn thread_info(
+        target_act: ThreadInspectT,
+        flavor: ThreadFlavorT,
+        thread_info_out: ThreadInfoT,
+        thread_info_out_count: *mut MachMsgTypeNumberT,
+    ) -> KernReturnT;
+}
+
+#[cfg(target_os = "macos")]
+fn thread_cpu_time_secs() -> Option<f64> {
+    let mut info = ThreadBasicInfo {
+        user_time: TimeValueT {
+            seconds: 0,
+            microseconds: 0,
+        },
+        system_time: TimeValueT {
+            seconds: 0,
+            microseconds: 0,
+        },
+        cpu_usage: 0,
+        policy: 0,
+        run_state: 0,
+        flags: 0,
+        suspend_count: 0,
+        sleep_time: 0,
+    };
+    let mut count = THREAD_BASIC_INFO_COUNT;
+
+    let result = unsafe {
+        thread_info(
+            pthread_mach_thread_np(pthread_self()),
+            THREAD_BASIC_INFO,
+            (&mut info as *mut ThreadBasicInfo).cast::<IntegerT>(),
+            &mut count,
+        )
+    };
+
+    if result != KERN_SUCCESS || count < THREAD_BASIC_INFO_COUNT {
+        return None;
+    }
+
+    let user_secs =
+        info.user_time.seconds as f64 + (info.user_time.microseconds as f64 / 1_000_000.0);
+    let system_secs =
+        info.system_time.seconds as f64 + (info.system_time.microseconds as f64 / 1_000_000.0);
+
+    Some(user_secs + system_secs)
+}
+
+#[derive(Clone)]
+pub struct RunControl {
+    app: AppHandle,
+    expected_generation: u64,
+}
+
+impl RunControl {
+    pub fn new(app: AppHandle, expected_generation: u64) -> Self {
+        Self {
+            app,
+            expected_generation,
+        }
+    }
+
+    pub fn is_current_generation(&self) -> bool {
+        self.app
+            .state::<ClickerState>()
+            .run_generation
+            .load(Ordering::SeqCst)
+            == self.expected_generation
+    }
+
+    pub fn is_active(&self) -> bool {
+        let state = self.app.state::<ClickerState>();
+        state.running.load(Ordering::SeqCst)
+            && state.run_generation.load(Ordering::SeqCst) == self.expected_generation
+    }
+}
+
 pub fn start_clicker_inner(app: &AppHandle) -> Result<ClickerStatusPayload, String> {
     let state = app.state::<ClickerState>();
     if state.running.load(Ordering::SeqCst) {
@@ -106,19 +235,23 @@ pub fn start_clicker_inner(app: &AppHandle) -> Result<ClickerStatusPayload, Stri
 
     let settings = state.settings.lock().unwrap().clone();
     let config = build_config(&settings)?;
+    let expected_generation = state.run_generation.fetch_add(1, Ordering::SeqCst) + 1;
     state.running.store(true, Ordering::SeqCst);
-    let running = state.running.clone();
+    let control = RunControl::new(app.clone(), expected_generation);
     let app_handle = app.clone();
 
     std::thread::spawn(move || {
-        let outcome = engine_start(config, running.clone());
-        running.store(false, Ordering::SeqCst);
-
-        print_run_stats(outcome.click_count, outcome.elapsed_secs, outcome.avg_cpu);
-
-        record_run(outcome.click_count, outcome.elapsed_secs, outcome.avg_cpu);
+        let outcome = engine_start(config, control.clone());
+        if !control.is_current_generation() {
+            return;
+        }
 
         let state = app_handle.state::<ClickerState>();
+        state.running.store(false, Ordering::SeqCst);
+
+        print_run_stats(outcome.click_count, outcome.elapsed_secs, outcome.avg_cpu);
+        record_run(outcome.click_count, outcome.elapsed_secs, outcome.avg_cpu);
+
         *state.stop_reason.lock().unwrap() = Some(outcome.stop_reason.clone());
         *state.last_error.lock().unwrap() = None;
         emit_status(&app_handle);
@@ -128,12 +261,14 @@ pub fn start_clicker_inner(app: &AppHandle) -> Result<ClickerStatusPayload, Stri
     emit_status(app);
     Ok(payload)
 }
+
 pub fn stop_clicker_inner(
     app: &AppHandle,
     stop_reason: Option<String>,
 ) -> Result<ClickerStatusPayload, String> {
     let state = app.state::<ClickerState>();
     state.running.store(false, Ordering::SeqCst);
+    state.run_generation.fetch_add(1, Ordering::SeqCst);
     if let Some(reason) = stop_reason {
         *state.stop_reason.lock().unwrap() = Some(reason);
     }
@@ -191,16 +326,9 @@ pub fn build_config(settings: &ClickerSettings) -> Result<ClickerConfig, String>
         button,
         double_click_enabled: settings.double_click_enabled,
         double_click_delay_ms: settings.double_click_delay,
-        pos_x: if settings.position_enabled {
-            settings.position_x
-        } else {
-            0
-        },
-        pos_y: if settings.position_enabled {
-            settings.position_y
-        } else {
-            0
-        },
+        position_enabled: settings.position_enabled,
+        pos_x: settings.position_x,
+        pos_y: settings.position_y,
         offset: 0.0,
         offset_chance: 0.0,
         smoothing: 0,
@@ -250,16 +378,18 @@ pub fn now_epoch_ms() -> u64 {
         .unwrap_or(0)
 }
 
-// -- Engine loop --
-
-pub fn start_clicker(config: ClickerConfig, running: Arc<AtomicBool>) -> RunOutcome {
+pub fn start_clicker(config: ClickerConfig, control: RunControl) -> RunOutcome {
     CLICK_COUNT.store(0, Ordering::SeqCst);
 
     let mut current = 0u32;
     unsafe { NtSetTimerResolution(10000, 1, &mut current) };
 
+    #[cfg(target_os = "windows")]
     let cycle_freq = calibrate_cycle_freq();
+    #[cfg(target_os = "windows")]
     let cpu_cycles_start = thread_cycles();
+    #[cfg(target_os = "macos")]
+    let cpu_time_start = thread_cpu_time_secs();
     let start_time = Instant::now();
 
     let mut rng = SmallRng::new();
@@ -277,7 +407,7 @@ pub fn start_clicker(config: ClickerConfig, running: Arc<AtomicBool>) -> RunOutc
     };
 
     let batch_interval = config.interval * batch_size as f64;
-    let has_position = config.pos_x != 0 || config.pos_y != 0;
+    let has_position = config.position_enabled;
     let use_smoothing = config.smoothing == 1 && cps < 50.0;
 
     let mut target_x = config.pos_x;
@@ -289,7 +419,7 @@ pub fn start_clicker(config: ClickerConfig, running: Arc<AtomicBool>) -> RunOutc
         move_mouse(target_x, target_y);
     }
 
-    while running.load(Ordering::SeqCst) {
+    while control.is_active() {
         if let Some(reason) = should_stop_for_failsafe(&config) {
             stop_reason = reason;
             break;
@@ -366,36 +496,43 @@ pub fn start_clicker(config: ClickerConfig, running: Arc<AtomicBool>) -> RunOutc
             hold_ms,
             config.double_click_enabled,
             config.double_click_delay_ms,
-            &running,
+            &control,
         );
+
+        if !control.is_active() {
+            break;
+        }
 
         click_count += clicks_this_cycle as i64;
         CLICK_COUNT.store(click_count, Ordering::Relaxed);
 
         let remaining = next_batch_time.saturating_duration_since(Instant::now());
         if remaining > Duration::ZERO {
-            sleep_interruptible(remaining, &running);
+            sleep_interruptible(remaining, &control);
         }
     }
 
-    running.store(false, Ordering::SeqCst);
     unsafe { NtSetTimerResolution(10000, 0, &mut current) };
 
     let elapsed_secs = start_time.elapsed().as_secs_f64();
-    let cpu_cycles_end = thread_cycles();
-    let cycle_delta = cpu_cycles_end.saturating_sub(cpu_cycles_start);
-
-    let avg_cpu: f64 = if elapsed_secs < 0.001 || cycle_freq <= f64::EPSILON {
+    #[cfg(target_os = "windows")]
+    let avg_cpu: f64 = if cycle_freq <= f64::EPSILON {
         -1.0
     } else {
+        let cpu_cycles_end = thread_cycles();
+        let cycle_delta = cpu_cycles_end.saturating_sub(cpu_cycles_start);
         let cpu_seconds = cycle_delta as f64 / cycle_freq;
-        let pct = (cpu_seconds / elapsed_secs) * 100.0;
-        if pct < 0.001 {
-            -1.0
-        } else {
-            pct
-        }
+        cpu_percent_from_seconds(elapsed_secs, cpu_seconds)
     };
+    #[cfg(target_os = "macos")]
+    let avg_cpu: f64 = match (cpu_time_start, thread_cpu_time_secs()) {
+        (Some(start_cpu), Some(end_cpu)) if end_cpu >= start_cpu => {
+            cpu_percent_from_seconds(elapsed_secs, end_cpu - start_cpu)
+        }
+        _ => -1.0,
+    };
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let avg_cpu: f64 = -1.0;
 
     RunOutcome {
         stop_reason,
@@ -409,10 +546,10 @@ pub fn get_click_count() -> i64 {
     CLICK_COUNT.load(Ordering::Relaxed)
 }
 
-pub fn sleep_interruptible(remaining: Duration, running: &Arc<AtomicBool>) {
+pub fn sleep_interruptible(remaining: Duration, control: &RunControl) {
     let tick = Duration::from_millis(5);
     let start = Instant::now();
-    while running.load(Ordering::SeqCst) && start.elapsed() < remaining {
+    while control.is_active() && start.elapsed() < remaining {
         let left = remaining.saturating_sub(start.elapsed());
         std::thread::sleep(left.min(tick));
     }

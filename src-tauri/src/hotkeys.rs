@@ -1,33 +1,37 @@
-use crate::ClickerState;
-#[cfg(target_os = "windows")]
-use std::sync::atomic::AtomicU64;
-use std::sync::atomic::Ordering;
-#[cfg(target_os = "windows")]
-use std::time::Duration;
-use tauri::{AppHandle, Manager};
-use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
-
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
-#[cfg(target_os = "windows")]
-use windows_sys::Win32::UI::WindowsAndMessaging::{
-    CallNextHookEx, GetMessageW, SetWindowsHookExW, MSG, WH_MOUSE_LL, WM_MOUSEWHEEL,
-};
-
 use crate::engine::worker::now_epoch_ms;
 use crate::engine::worker::start_clicker_inner;
 use crate::engine::worker::stop_clicker_inner;
 use crate::engine::worker::toggle_clicker_inner;
+use crate::ClickerState;
+use std::sync::atomic::Ordering;
+use tauri::{AppHandle, Manager};
+use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
+
+#[cfg(target_os = "windows")]
+use std::sync::atomic::{AtomicBool, AtomicU64};
+#[cfg(target_os = "windows")]
+use std::time::Duration;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    CallNextHookEx, GetMessageW, SetWindowsHookExW, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG,
+    WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MOUSEWHEEL, WM_SYSKEYDOWN, WM_SYSKEYUP,
+};
 
 #[cfg(target_os = "windows")]
 pub const VK_SCROLL_UP_PSEUDO: i32 = -1;
 #[cfg(target_os = "windows")]
 pub const VK_SCROLL_DOWN_PSEUDO: i32 = -2;
+#[cfg(target_os = "windows")]
+pub const VK_NUMPAD_ENTER_PSEUDO: i32 = -3;
 
 #[cfg(target_os = "windows")]
 static SCROLL_UP_AT: AtomicU64 = AtomicU64::new(0);
 #[cfg(target_os = "windows")]
 static SCROLL_DOWN_AT: AtomicU64 = AtomicU64::new(0);
+#[cfg(target_os = "windows")]
+static NUMPAD_ENTER_DOWN: AtomicBool = AtomicBool::new(false);
 
 #[cfg(target_os = "windows")]
 const SCROLL_WINDOW_MS: u64 = 200;
@@ -270,6 +274,70 @@ pub fn parse_hotkey_main_key(
             HotkeyMainKey::WindowsVk(VK_SCROLL_DOWN_PSEUDO),
             String::from("scrolldown"),
         )),
+        "numpadenter" => Some((
+            HotkeyMainKey::WindowsVk(VK_NUMPAD_ENTER_PSEUDO),
+            String::from("numpadenter"),
+        )),
+        "numpad0" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad0),
+            String::from("numpad0"),
+        )),
+        "numpad1" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad1),
+            String::from("numpad1"),
+        )),
+        "numpad2" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad2),
+            String::from("numpad2"),
+        )),
+        "numpad3" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad3),
+            String::from("numpad3"),
+        )),
+        "numpad4" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad4),
+            String::from("numpad4"),
+        )),
+        "numpad5" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad5),
+            String::from("numpad5"),
+        )),
+        "numpad6" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad6),
+            String::from("numpad6"),
+        )),
+        "numpad7" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad7),
+            String::from("numpad7"),
+        )),
+        "numpad8" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad8),
+            String::from("numpad8"),
+        )),
+        "numpad9" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad9),
+            String::from("numpad9"),
+        )),
+        "numpadadd" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadAdd),
+            String::from("numpadadd"),
+        )),
+        "numpadsubtract" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadSubtract),
+            String::from("numpadsubtract"),
+        )),
+        "numpadmultiply" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadMultiply),
+            String::from("numpadmultiply"),
+        )),
+        "numpaddivide" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadDivide),
+            String::from("numpaddivide"),
+        )),
+        "numpaddecimal" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadDecimal),
+            String::from("numpaddecimal"),
+        )),
         "<" | ">" | "intlbackslash" | "oem102" | "nonusbackslash" => Some((
             HotkeyMainKey::Keyboard(Code::IntlBackslash),
             String::from("IntlBackslash"),
@@ -345,6 +413,70 @@ pub fn parse_hotkey_main_key(
                 "The hotkey '{token}' in '{original_hotkey}' is currently only supported on Windows."
             ));
         }
+        "numpad0" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad0),
+            String::from("numpad0"),
+        )),
+        "numpad1" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad1),
+            String::from("numpad1"),
+        )),
+        "numpad2" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad2),
+            String::from("numpad2"),
+        )),
+        "numpad3" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad3),
+            String::from("numpad3"),
+        )),
+        "numpad4" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad4),
+            String::from("numpad4"),
+        )),
+        "numpad5" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad5),
+            String::from("numpad5"),
+        )),
+        "numpad6" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad6),
+            String::from("numpad6"),
+        )),
+        "numpad7" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad7),
+            String::from("numpad7"),
+        )),
+        "numpad8" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad8),
+            String::from("numpad8"),
+        )),
+        "numpad9" => Some((
+            HotkeyMainKey::Keyboard(Code::Numpad9),
+            String::from("numpad9"),
+        )),
+        "numpadadd" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadAdd),
+            String::from("numpadadd"),
+        )),
+        "numpadsubtract" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadSubtract),
+            String::from("numpadsubtract"),
+        )),
+        "numpadmultiply" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadMultiply),
+            String::from("numpadmultiply"),
+        )),
+        "numpaddivide" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadDivide),
+            String::from("numpaddivide"),
+        )),
+        "numpaddecimal" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadDecimal),
+            String::from("numpaddecimal"),
+        )),
+        "numpadenter" => Some((
+            HotkeyMainKey::Keyboard(Code::NumpadEnter),
+            String::from("numpadenter"),
+        )),
         "<" | ">" | "intlbackslash" | "oem102" | "nonusbackslash" => Some((
             HotkeyMainKey::Keyboard(Code::IntlBackslash),
             String::from("IntlBackslash"),
@@ -700,6 +832,7 @@ fn is_main_key_active(vk: i32) -> bool {
             let now = now_epoch_ms();
             now.saturating_sub(ts) < SCROLL_WINDOW_MS
         }
+        VK_NUMPAD_ENTER_PSEUDO => NUMPAD_ENTER_DOWN.load(Ordering::SeqCst),
         _ => is_vk_down(vk),
     }
 }
@@ -715,9 +848,17 @@ pub fn start_scroll_hook() {}
 #[cfg(target_os = "windows")]
 pub fn start_scroll_hook() {
     std::thread::spawn(|| unsafe {
-        let hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), 0, 0);
-        if hook == 0 {
+        let mouse_hook = SetWindowsHookExW(WH_MOUSE_LL, Some(mouse_hook_proc), 0, 0);
+        if mouse_hook == 0 {
             log::error!("[Hotkeys] Failed to install WH_MOUSE_LL hook");
+        }
+
+        let keyboard_hook = SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard_hook_proc), 0, 0);
+        if keyboard_hook == 0 {
+            log::error!("[Hotkeys] Failed to install WH_KEYBOARD_LL hook");
+        }
+
+        if mouse_hook == 0 && keyboard_hook == 0 {
             return;
         }
 
@@ -727,11 +868,30 @@ pub fn start_scroll_hook() {
 }
 
 #[cfg(target_os = "windows")]
+unsafe extern "system" fn keyboard_hook_proc(code: i32, w_param: usize, l_param: isize) -> isize {
+    if code >= 0 {
+        let info = &*(l_param as *const KBDLLHOOKSTRUCT);
+        if info.vkCode as i32 == VK_RETURN as i32 && (info.flags & LLKHF_EXTENDED) != 0 {
+            match w_param as u32 {
+                WM_KEYDOWN | WM_SYSKEYDOWN => {
+                    NUMPAD_ENTER_DOWN.store(true, Ordering::SeqCst);
+                }
+                WM_KEYUP | WM_SYSKEYUP => {
+                    NUMPAD_ENTER_DOWN.store(false, Ordering::SeqCst);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    CallNextHookEx(0, code, w_param, l_param)
+}
+
+#[cfg(target_os = "windows")]
 unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: isize) -> isize {
     if code >= 0 && w_param == WM_MOUSEWHEEL as usize {
-        #[allow(clippy::upper_case_acronyms)]
         #[repr(C)]
-        struct MSLLHOOKSTRUCT {
+        struct MsllHookStruct {
             pt_x: i32,
             pt_y: i32,
             mouse_data: u32,
@@ -740,7 +900,7 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: is
             extra_info: usize,
         }
 
-        let info = &*(l_param as *const MSLLHOOKSTRUCT);
+        let info = &*(l_param as *const MsllHookStruct);
         let delta = (info.mouse_data >> 16) as i16;
         let now = now_epoch_ms();
         if delta > 0 {
@@ -751,4 +911,42 @@ unsafe extern "system" fn mouse_hook_proc(code: i32, w_param: usize, l_param: is
     }
 
     CallNextHookEx(0, code, w_param, l_param)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{format_hotkey_binding, parse_hotkey_binding};
+
+    #[test]
+    fn numpad_tokens_round_trip() {
+        for token in [
+            "numpad0",
+            "numpad1",
+            "numpad2",
+            "numpad3",
+            "numpad4",
+            "numpad5",
+            "numpad6",
+            "numpad7",
+            "numpad8",
+            "numpad9",
+            "numpadadd",
+            "numpadsubtract",
+            "numpadmultiply",
+            "numpaddivide",
+            "numpaddecimal",
+            "numpadenter",
+        ] {
+            let hotkey = format!("ctrl+shift+{token}");
+            let binding = parse_hotkey_binding(&hotkey).expect("token should parse");
+            assert_eq!(binding.key_token, token);
+            assert_eq!(format_hotkey_binding(&binding), hotkey);
+        }
+    }
+
+    #[test]
+    fn empty_hotkeys_are_rejected() {
+        assert!(parse_hotkey_binding("").is_err());
+        assert!(parse_hotkey_binding("ctrl+").is_err());
+    }
 }

@@ -1,9 +1,52 @@
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::Duration;
 
 use super::rng::SmallRng;
-use super::sleep_interruptible;
+use super::worker::{sleep_interruptible, RunControl};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct VirtualScreenRect {
+    pub left: i32,
+    pub top: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
+impl VirtualScreenRect {
+    #[inline]
+    pub fn new(left: i32, top: i32, width: i32, height: i32) -> Self {
+        Self {
+            left,
+            top,
+            width,
+            height,
+        }
+    }
+
+    #[inline]
+    pub fn right(self) -> i32 {
+        self.left + self.width
+    }
+
+    #[inline]
+    pub fn bottom(self) -> i32 {
+        self.top + self.height
+    }
+
+    #[inline]
+    pub fn contains(self, x: i32, y: i32) -> bool {
+        x >= self.left && x < self.right() && y >= self.top && y < self.bottom()
+    }
+
+    #[inline]
+    pub fn offset_from(self, origin: VirtualScreenRect) -> Self {
+        Self::new(
+            self.left - origin.left,
+            self.top - origin.top,
+            self.width,
+            self.height,
+        )
+    }
+}
 
 #[derive(Clone, Copy, Debug)]
 pub enum MouseEventSpec {
@@ -17,14 +60,15 @@ pub enum MouseEventSpec {
 
 #[cfg(target_os = "windows")]
 mod platform {
-    use super::MouseEventSpec;
+    use super::{MouseEventSpec, VirtualScreenRect};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         SendInput, INPUT, INPUT_MOUSE, MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP,
         MOUSEEVENTF_MIDDLEDOWN, MOUSEEVENTF_MIDDLEUP, MOUSEEVENTF_RIGHTDOWN, MOUSEEVENTF_RIGHTUP,
         MOUSEINPUT,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetSystemMetrics, SetCursorPos, SM_CXSCREEN, SM_CYSCREEN,
+        GetSystemMetrics, SetCursorPos, SM_CXVIRTUALSCREEN, SM_CYVIRTUALSCREEN, SM_XVIRTUALSCREEN,
+        SM_YVIRTUALSCREEN,
     };
 
     pub fn current_cursor_position() -> Option<(i32, i32)> {
@@ -40,21 +84,65 @@ mod platform {
         }
     }
 
-    pub fn current_screen_size() -> Option<(i32, i32)> {
-        let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-        let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    pub fn current_virtual_screen_rect() -> Option<VirtualScreenRect> {
+        let left = unsafe { GetSystemMetrics(SM_XVIRTUALSCREEN) };
+        let top = unsafe { GetSystemMetrics(SM_YVIRTUALSCREEN) };
+        let width = unsafe { GetSystemMetrics(SM_CXVIRTUALSCREEN) };
+        let height = unsafe { GetSystemMetrics(SM_CYVIRTUALSCREEN) };
         if width <= 0 || height <= 0 {
             return None;
         }
 
-        use windows_sys::Win32::UI::HiDpi::GetDpiForSystem;
-        let dpi = unsafe { GetDpiForSystem() };
-        let scale = dpi as f64 / 96.0;
+        Some(VirtualScreenRect::new(left, top, width, height))
+    }
 
-        Some((
-            (width as f64 / scale) as i32,
-            (height as f64 / scale) as i32,
-        ))
+    pub fn current_monitor_rects() -> Option<Vec<VirtualScreenRect>> {
+        use std::ptr;
+        use windows_sys::Win32::Foundation::RECT;
+        use windows_sys::Win32::Graphics::Gdi::{
+            EnumDisplayMonitors, GetMonitorInfoW, MONITORINFO,
+        };
+
+        unsafe extern "system" fn enum_monitor_proc(
+            monitor: isize,
+            _hdc: isize,
+            _clip_rect: *mut RECT,
+            user_data: isize,
+        ) -> i32 {
+            let monitors = &mut *(user_data as *mut Vec<VirtualScreenRect>);
+            let mut info = std::mem::zeroed::<MONITORINFO>();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+
+            if GetMonitorInfoW(monitor, &mut info as *mut MONITORINFO as *mut _) == 0 {
+                return 1;
+            }
+
+            let rect = info.rcMonitor;
+            let width = rect.right - rect.left;
+            let height = rect.bottom - rect.top;
+            if width > 0 && height > 0 {
+                monitors.push(VirtualScreenRect::new(rect.left, rect.top, width, height));
+            }
+
+            1
+        }
+
+        let mut monitors = Vec::new();
+        let ok = unsafe {
+            EnumDisplayMonitors(
+                0,
+                ptr::null(),
+                Some(enum_monitor_proc),
+                &mut monitors as *mut Vec<VirtualScreenRect> as isize,
+            )
+        };
+
+        if ok == 0 || monitors.is_empty() {
+            return current_virtual_screen_rect().map(|screen| vec![screen]);
+        }
+
+        monitors.sort_by_key(|monitor: &VirtualScreenRect| (monitor.top, monitor.left));
+        Some(monitors)
     }
 
     pub fn move_mouse(x: i32, y: i32) {
@@ -111,7 +199,7 @@ mod platform {
 
 #[cfg(target_os = "macos")]
 mod platform {
-    use super::MouseEventSpec;
+    use super::{MouseEventSpec, VirtualScreenRect};
     use core_graphics::display::{CGDisplay, CGPoint};
     use core_graphics::event::{
         CGEvent, CGEventTapLocation, CGEventType, CGMouseButton, EventField,
@@ -128,16 +216,48 @@ mod platform {
         Some(event.location())
     }
 
+    fn display_rect(display: CGDisplay) -> VirtualScreenRect {
+        let bounds = display.bounds();
+        VirtualScreenRect::new(
+            bounds.origin.x.round() as i32,
+            bounds.origin.y.round() as i32,
+            bounds.size.width.round() as i32,
+            bounds.size.height.round() as i32,
+        )
+    }
+
     pub fn current_cursor_position() -> Option<(i32, i32)> {
         let point = current_location()?;
         Some((point.x.round() as i32, point.y.round() as i32))
     }
 
-    pub fn current_screen_size() -> Option<(i32, i32)> {
-        let bounds = CGDisplay::main().bounds();
-        Some((
-            bounds.size.width.round() as i32,
-            bounds.size.height.round() as i32,
+    pub fn current_monitor_rects() -> Option<Vec<VirtualScreenRect>> {
+        let mut monitors: Vec<VirtualScreenRect> = CGDisplay::active_displays()
+            .ok()?
+            .into_iter()
+            .map(|id| display_rect(CGDisplay::new(id)))
+            .filter(|rect| rect.width > 0 && rect.height > 0)
+            .collect();
+
+        if monitors.is_empty() {
+            monitors.push(display_rect(CGDisplay::main()));
+        }
+
+        monitors.sort_by_key(|monitor| (monitor.top, monitor.left));
+        Some(monitors)
+    }
+
+    pub fn current_virtual_screen_rect() -> Option<VirtualScreenRect> {
+        let monitors = current_monitor_rects()?;
+        let left = monitors.iter().map(|m| m.left).min()?;
+        let top = monitors.iter().map(|m| m.top).min()?;
+        let right = monitors.iter().map(|m| m.right()).max()?;
+        let bottom = monitors.iter().map(|m| m.bottom()).max()?;
+        Some(VirtualScreenRect::new(
+            left,
+            top,
+            right - left,
+            bottom - top,
         ))
     }
 
@@ -192,13 +312,17 @@ mod platform {
 
 #[cfg(not(any(target_os = "windows", target_os = "macos")))]
 mod platform {
-    use super::MouseEventSpec;
+    use super::{MouseEventSpec, VirtualScreenRect};
 
     pub fn current_cursor_position() -> Option<(i32, i32)> {
         None
     }
 
-    pub fn current_screen_size() -> Option<(i32, i32)> {
+    pub fn current_virtual_screen_rect() -> Option<VirtualScreenRect> {
+        None
+    }
+
+    pub fn current_monitor_rects() -> Option<Vec<VirtualScreenRect>> {
         None
     }
 
@@ -213,8 +337,12 @@ pub fn current_cursor_position() -> Option<(i32, i32)> {
     platform::current_cursor_position()
 }
 
-pub fn current_screen_size() -> Option<(i32, i32)> {
-    platform::current_screen_size()
+pub fn current_virtual_screen_rect() -> Option<VirtualScreenRect> {
+    platform::current_virtual_screen_rect()
+}
+
+pub fn current_monitor_rects() -> Option<Vec<VirtualScreenRect>> {
+    platform::current_monitor_rects()
 }
 
 #[inline]
@@ -243,7 +371,7 @@ pub fn send_clicks(
     hold_ms: u32,
     use_double_click_gap: bool,
     double_click_delay_ms: u32,
-    running: &Arc<AtomicBool>,
+    control: &RunControl,
 ) {
     if count == 0 {
         return;
@@ -255,7 +383,7 @@ pub fn send_clicks(
     }
 
     for index in 0..count {
-        if !running.load(Ordering::SeqCst) {
+        if !control.is_active() {
             return;
         }
 
@@ -267,12 +395,15 @@ pub fn send_clicks(
 
         send_mouse_event(down, click_state);
         if hold_ms > 0 {
-            sleep_interruptible(Duration::from_millis(hold_ms as u64), running);
+            sleep_interruptible(Duration::from_millis(hold_ms as u64), control);
+            if !control.is_active() {
+                return;
+            }
         }
         send_mouse_event(up, click_state);
 
         if index + 1 < count && use_double_click_gap && double_click_delay_ms > 0 {
-            sleep_interruptible(Duration::from_millis(double_click_delay_ms as u64), running);
+            sleep_interruptible(Duration::from_millis(double_click_delay_ms as u64), control);
         }
     }
 }
