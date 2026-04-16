@@ -46,6 +46,7 @@ export interface Settings {
   lastPanel: SavedPanel;
   showStopReason: boolean;
   showStopOverlay: boolean;
+  strictHotkeyModifiers: boolean;
   theme: Theme;
 }
 
@@ -102,6 +103,7 @@ export const DEFAULT_SETTINGS: Settings = {
   lastPanel: "simple",
   showStopReason: true,
   showStopOverlay: true,
+  strictHotkeyModifiers: false,
   theme: "dark",
 };
 

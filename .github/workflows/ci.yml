@@ -2,16 +2,62 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
+    branches: [main, dev]
   pull_request:
+    branches: [main, dev]
 
 permissions:
   contents: read
 
 jobs:
-  build:
-    name: Build (${{ matrix.os }})
+  frontend:
+    name: Frontend (lint + type check + build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Type check and build
+        run: npm run build
+
+  rust:
+    name: Rust (check + test)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workdir: src-tauri
+
+      - name: Check
+        working-directory: src-tauri
+        run: cargo check
+
+      - name: Test
+        working-directory: src-tauri
+        run: cargo test
+
+  bundle:
+    name: Bundle (${{ matrix.os }})
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    needs:
+      - frontend
+      - rust
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,7 +73,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: npm
 
       - name: Set up Rust
@@ -39,13 +85,7 @@ jobs:
           workspaces: src-tauri -> target
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Build frontend
-        run: npm run build
-
-      - name: Check Rust backend
-        run: cargo check --manifest-path src-tauri/Cargo.toml
+        run: npm install
 
       - name: Build Tauri app for pull requests
         if: github.event_name == 'pull_request'
@@ -78,7 +118,7 @@ jobs:
   release:
     name: Create GitHub release
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    needs: build
+    needs: bundle
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -168,9 +208,9 @@ jobs:
 
             const shouldRelease = !releaseExists && !tagExists;
 
-            core.setOutput('release_exists', String(releaseExists));
-            core.setOutput('tag_exists', String(tagExists));
-            core.setOutput('should_release', String(shouldRelease));
+            core.setOutput("release_exists", String(releaseExists));
+            core.setOutput("tag_exists", String(tagExists));
+            core.setOutput("should_release", String(shouldRelease));
 
       - name: Download release assets
         if: steps.release_state.outputs.should_release == 'true'
