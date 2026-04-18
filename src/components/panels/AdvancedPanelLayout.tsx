@@ -486,7 +486,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.doubleClickEnabled}>
                 <div className="adv-row" style={{ gap: 8 }}>
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.doubleClickDescription")}
                     </p>
                   )}
@@ -591,7 +591,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.cornerStopEnabled}>
                 <div className="adv-row" style={{ gap: 8 }}>
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.cornerStopDescription")}
                     </p>
                   )}
@@ -630,7 +630,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.edgeStopEnabled}>
                 <div className="adv-row" style={{ gap: 8 }}>
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.edgeStopDescription")}
                     </p>
                   )}
@@ -672,7 +672,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.positionEnabled}>
                 <div className="adv-row" style={{ marginTop: 8, gap: 6 }}>
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.positionDescription")}
                     </p>
                   )}
@@ -759,7 +759,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.sequenceEnabled}>
                 <div className="adv-sequence-body">
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.sequenceClickingDescription")}
                     </p>
                   )}
@@ -790,7 +790,7 @@ export default function AdvancedPanelLayout({
               <Disableable enabled={settings.customStopZoneEnabled}>
                 <div className="adv-stop-zone-body">
                   {showExplanations && (
-                    <p className="adv-desc" style={{ flex: 1 }}>
+                    <p className="adv-desc">
                       {t("advanced.customStopZoneDescription")}
                     </p>
                   )}

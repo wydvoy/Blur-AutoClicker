@@ -237,18 +237,17 @@ export default function CadenceInput({ settings, update, variant }: Props) {
           </div>
         )}
         <div className="vertical-devider" />
-        <div className="simple-seg-group cadence-mode-group">
-          {RATE_INPUT_MODE_OPTIONS.map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              className={`simple-seg-btn ${settings.rateInputMode === mode ? "active" : ""}`}
-              onClick={() => switchMode(mode)}
-            >
-              {mode === "rate" ? "Rate" : "Delay"}
-            </button>
-          ))}
-        </div>
+        <button
+          type="button"
+          className="simple-cycle-btn"
+          onClick={() => switchMode(settings.rateInputMode === "rate" ? "delay" : "rate")}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            switchMode(settings.rateInputMode === "rate" ? "delay" : "rate");
+          }}
+        >
+          {settings.rateInputMode === "rate" ? "Rate" : "Delay"}
+        </button>
         {renderClockIcon()}
       </div>
     );

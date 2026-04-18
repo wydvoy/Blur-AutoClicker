@@ -640,6 +640,7 @@ input[type="number"]::-webkit-outer-spin-button {
 .adv-sequence-body,
 .adv-stop-zone-body {
   display: flex;
+  flex-direction: column;
   gap: 10px;
   align-items: flex-start;
 }
@@ -773,7 +774,3 @@ input[type="number"]::-webkit-outer-spin-button {
   grid-template-columns: 24px minmax(0, auto) minmax(0, auto) 1fr;
 }
 
-.advanced-panel-compact .adv-sequence-body,
-.advanced-panel-compact .adv-stop-zone-body {
-  flex-direction: column;
-}
