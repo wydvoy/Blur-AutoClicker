@@ -59,14 +59,17 @@ By default, the program is stored in `%localappdata%/BlurAutoClicker/BlurAutoCli
 macOS:
 1. download the `BlurAutoClicker-<version>-macOS.zip` from releases
 2. unzip it (macOS usually does this automatically in the Downloads folder) and drag `BlurAutoClicker.app` into `Applications`
-3. the first time you launch it, right-click `BlurAutoClicker.app` → **Open** and confirm **Open** in the dialog. This is only needed once because the build is not signed with a paid Apple Developer ID.
-4. if macOS blocks automated clicks, allow the app under `System Settings > Privacy & Security > Accessibility`
+3. launch the app. macOS will show *"Apple could not verify 'BlurAutoClicker.app' is free of malware"*. This is expected because the build is not signed with a paid Apple Developer ID. Click **Done**.
+4. open `System Settings` → `Privacy & Security`, scroll to the bottom, and click **Open Anyway** next to the BlurAutoClicker entry. Authenticate with Touch ID or your password. The app then starts normally on every subsequent launch.
+5. if macOS blocks automated clicks, allow the app under `System Settings` → `Privacy & Security` → `Accessibility`.
 
-If macOS still shows a *"…is damaged and can't be opened"* error (can happen on newer macOS versions), remove the quarantine flag once from Terminal:
+Prefer the Terminal? You can skip steps 3–4 by removing the quarantine flag once:
 
 ```bash
 xattr -cr /Applications/BlurAutoClicker.app
 ```
+
+After that, the app launches without any Gatekeeper prompt.
 
 Config and stats are stored in the platform app data directory:
 - Windows: `%appdata%/BlurAutoClicker`
