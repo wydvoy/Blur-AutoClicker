@@ -1,3 +1,9 @@
+# v3.4.1.1 - 20.04.2026 (d.m.y)
+## 🔺 Fix:
+- Mac .dmg not working due to signing
+
+
+
 # v3.4.1 - 16.06.2026 (d.m.y)
 ## ❇️ New:
 - added a settings toggle for relaxed / strict keybind mode.
