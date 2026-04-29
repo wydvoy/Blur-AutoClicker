@@ -6,8 +6,17 @@ import {
   LogicalSize,
 } from "@tauri-apps/api/window";
 import { lazy, useEffect, useRef, useState } from "react";
+import { applyAccentTheme } from "./accentTheme";
 import UpdateBanner from "./components/Updatebanner";
 import { canonicalizeHotkeyForBackend } from "./hotkeys";
+import { I18nProvider, isRtlLanguage } from "./i18n";
+import {
+  buildPresetSnapshot,
+  createPresetDefinition,
+  MAX_PRESETS,
+  sanitizePresetName,
+  type PresetId,
+} from "./settingsSchema";
 import {
   APP_VERSION,
   DEFAULT_SETTINGS,
@@ -20,24 +29,33 @@ import {
 } from "./store";
 
 const SimplePanel = lazy(() => import("./components/panels/SimplePanel"));
-const AdvancedPanel = lazy(() => import("./components/panels/AdvancedPanel"));
+const AdvancedPanel = lazy(
+  () => import("./components/panels/advanced/AdvancedPanel"),
+);
+const ZonesPanel = lazy(() => import("./components/panels/zones/ZonesPanel"));
 const SettingsPanel = lazy(() => import("./components/panels/SettingsPanel"));
 const TitleBar = lazy(() => import("./components/TitleBar"));
-const AdvancedPanelCompact = lazy(
-  () => import("./components/panels/AdvancedPanelCompact"),
+export type Tab = "simple" | "advanced" | "zones" | "settings";
+
+const BACKEND_SETTINGS_SCHEMA_VERSION = 8;
+const MAX_DROPDOWN_OVERFLOW_BOTTOM = 220;
+const OPERATIONAL_SETTING_KEYS = new Set<string>(
+  Object.keys(buildPresetSnapshot(DEFAULT_SETTINGS)),
 );
 
-export type Tab = "simple" | "advanced" | "settings";
+type DropdownOverflowDetail = {
+  active: boolean;
+  bottom?: number;
+};
 
-const BACKEND_SETTINGS_SCHEMA_VERSION = 5;
-
-function getPanelSize(tab: Tab, settings: Settings, hasUpdate: boolean) {
+function getPanelSize(tab: Tab, hasUpdate: boolean) {
   const extra = hasUpdate ? 30 : 0;
-  if (tab === "settings") return { width: 500, height: 600 + extra };
-  if (tab === "simple") return { width: 550, height: 175 + extra };
-  return settings.explanationMode === "off"
-    ? { width: 600, height: 600 + extra }
-    : { width: 800, height: 650 + extra };
+  if (tab === "simple") {
+    return { width: 650, height: 175 + extra };
+  }
+  if (tab === "settings") return { width: 560, height: 720 + extra };
+  if (tab === "zones") return { width: 550, height: 400 + extra };
+  return { width: 860, height: 527 + extra };
 }
 
 const textScale = await invoke<number>("get_text_scale_factor");
@@ -73,12 +91,17 @@ const DEFAULT_STATUS: ClickerStatus = {
   clickCount: 0,
   lastError: null,
   stopReason: null,
+  activeSequenceIndex: null,
 };
 
 const DEFAULT_APP_INFO: AppInfo = {
   version: APP_VERSION,
   updateStatus: "Update checks are disabled in development",
   screenshotProtectionSupported: false,
+};
+
+type UpdateSettingsOptions = {
+  preserveActivePreset?: boolean;
 };
 
 async function syncSettingsToBackend(settings: Settings) {
@@ -109,6 +132,7 @@ export default function App() {
     currentVersion: string;
     latestVersion: string;
   } | null>(null);
+  const [dropdownOverflowBottom, setDropdownOverflowBottom] = useState(0);
 
   const hotkeyTimer = useRef<number | null>(null);
   const hotkeyRequestIdRef = useRef(0);
@@ -206,12 +230,31 @@ export default function App() {
     }, 250);
   };
 
-  const updateSettings = (patch: Partial<Settings>) => {
+  const updateSettings = (
+    patch: Partial<Settings>,
+    options: UpdateSettingsOptions = {},
+  ) => {
     const { hotkey, ...rest } = patch;
+    const shouldClearActivePreset =
+      !options.preserveActivePreset &&
+      (hotkey !== undefined ||
+        Object.keys(rest).some((key) => OPERATIONAL_SETTING_KEYS.has(key)));
 
-    if (Object.keys(rest).length > 0) {
-      const nextUiSettings = { ...uiSettingsRef.current, ...rest };
-      const nextCommittedSettings = { ...committedSettingsRef.current, ...rest };
+    const restPatch: Partial<Settings> = { ...rest };
+    if (
+      shouldClearActivePreset &&
+      patch.activePresetId === undefined &&
+      committedSettingsRef.current.activePresetId !== null
+    ) {
+      restPatch.activePresetId = null;
+    }
+
+    if (Object.keys(restPatch).length > 0) {
+      const nextUiSettings = { ...uiSettingsRef.current, ...restPatch };
+      const nextCommittedSettings = {
+        ...committedSettingsRef.current,
+        ...restPatch,
+      };
       persistCommittedSettings(nextCommittedSettings, nextUiSettings);
     }
 
@@ -229,7 +272,192 @@ export default function App() {
   };
 
   const handleWindowClose = async () => {
-    await getCurrentWindow().close();
+    if (uiSettingsRef.current.minimizeToTray) {
+      await getCurrentWindow().hide();
+    } else {
+      await invoke("quit_app");
+    }
+  };
+
+  const handleToggleAlwaysOnTop = async () => {
+    const nextValue = !committedSettingsRef.current.alwaysOnTop;
+
+    try {
+      await getCurrentWindow().setAlwaysOnTop(nextValue);
+      updateSettings(
+        {
+          alwaysOnTop: nextValue,
+        },
+        { preserveActivePreset: true },
+      );
+    } catch (err) {
+      console.error("Failed to set always on top:", err);
+    }
+  };
+
+  const handleSavePreset = (name: string) => {
+    if (status.running) {
+      return false;
+    }
+
+    if (committedSettingsRef.current.presets.length >= MAX_PRESETS) {
+      return false;
+    }
+
+    const preset = createPresetDefinition(name, committedSettingsRef.current);
+    if (!preset.name) {
+      return false;
+    }
+
+    const nextPresets = [...committedSettingsRef.current.presets, preset];
+    const nextCommittedSettings = {
+      ...committedSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: preset.id,
+    };
+    const nextUiSettings = {
+      ...uiSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: preset.id,
+    };
+
+    persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+    return true;
+  };
+
+  const handleApplyPreset = (presetId: PresetId) => {
+    if (status.running) {
+      return false;
+    }
+
+    const preset = committedSettingsRef.current.presets.find(
+      (item) => item.id === presetId,
+    );
+    if (!preset) {
+      return false;
+    }
+
+    updateSettings(
+      {
+        ...preset.settings,
+        activePresetId: presetId,
+      },
+      { preserveActivePreset: true },
+    );
+    return true;
+  };
+
+  const handleUpdatePreset = (presetId: PresetId) => {
+    if (status.running) {
+      return false;
+    }
+
+    const nextSnapshot = buildPresetSnapshot(committedSettingsRef.current);
+
+    let updated = false;
+    const nextPresets = committedSettingsRef.current.presets.map((preset) => {
+      if (preset.id !== presetId) {
+        return preset;
+      }
+
+      updated = true;
+      return {
+        ...preset,
+        updatedAt: new Date().toISOString(),
+        settings: nextSnapshot,
+      };
+    });
+
+    if (!updated) {
+      return false;
+    }
+
+    const nextCommittedSettings = {
+      ...committedSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: presetId,
+    };
+    const nextUiSettings = {
+      ...uiSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: presetId,
+    };
+
+    persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+    return true;
+  };
+
+  const handleRenamePreset = (presetId: PresetId, name: string) => {
+    if (status.running) {
+      return false;
+    }
+
+    const sanitizedName = sanitizePresetName(name);
+    if (!sanitizedName) {
+      return false;
+    }
+
+    let updated = false;
+    const nextPresets = committedSettingsRef.current.presets.map((preset) => {
+      if (preset.id !== presetId) {
+        return preset;
+      }
+
+      updated = true;
+      return {
+        ...preset,
+        name: sanitizedName,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+
+    if (!updated) {
+      return false;
+    }
+
+    const nextCommittedSettings = {
+      ...committedSettingsRef.current,
+      presets: nextPresets,
+    };
+    const nextUiSettings = {
+      ...uiSettingsRef.current,
+      presets: nextPresets,
+    };
+
+    persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+    return true;
+  };
+
+  const handleDeletePreset = (presetId: PresetId) => {
+    if (status.running) {
+      return false;
+    }
+
+    const nextPresets = committedSettingsRef.current.presets.filter(
+      (preset) => preset.id !== presetId,
+    );
+    if (nextPresets.length === committedSettingsRef.current.presets.length) {
+      return false;
+    }
+
+    const nextActivePresetId =
+      committedSettingsRef.current.activePresetId === presetId
+        ? null
+        : committedSettingsRef.current.activePresetId;
+
+    const nextCommittedSettings = {
+      ...committedSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: nextActivePresetId,
+    };
+    const nextUiSettings = {
+      ...uiSettingsRef.current,
+      presets: nextPresets,
+      activePresetId: nextActivePresetId,
+    };
+
+    persistCommittedSettings(nextCommittedSettings, nextUiSettings);
+    return true;
   };
 
   useEffect(() => {
@@ -243,18 +471,34 @@ export default function App() {
       .then(async ([loadedSettings, loadedAppInfo, loadedStatus]) => {
         if (!mounted) return;
 
+        let hydratedSettings = loadedSettings;
+
         let registeredHotkey = loadedSettings.hotkey;
         try {
-          registeredHotkey = await registerHotkeyCandidate(loadedSettings.hotkey);
+          registeredHotkey = await registerHotkeyCandidate(
+            loadedSettings.hotkey,
+          );
         } catch (err) {
           console.error("Failed to register saved hotkey:", err);
           registeredHotkey = lastValidHotkeyRef.current;
         }
 
-        const hydratedSettings =
-          registeredHotkey !== loadedSettings.hotkey
-            ? { ...loadedSettings, hotkey: registeredHotkey }
-            : loadedSettings;
+        if (registeredHotkey !== hydratedSettings.hotkey) {
+          hydratedSettings = {
+            ...hydratedSettings,
+            hotkey: registeredHotkey,
+          };
+        }
+
+        try {
+          await getCurrentWindow().setAlwaysOnTop(hydratedSettings.alwaysOnTop);
+        } catch (err) {
+          console.error("Failed to restore always on top:", err);
+          hydratedSettings = {
+            ...hydratedSettings,
+            alwaysOnTop: false,
+          };
+        }
 
         lastValidHotkeyRef.current = hydratedSettings.hotkey;
         uiSettingsRef.current = hydratedSettings;
@@ -268,7 +512,10 @@ export default function App() {
 
         await syncSettingsToBackend(hydratedSettings);
 
-        if (hydratedSettings.hotkey !== loadedSettings.hotkey) {
+        if (
+          hydratedSettings.hotkey !== loadedSettings.hotkey ||
+          hydratedSettings.alwaysOnTop !== loadedSettings.alwaysOnTop
+        ) {
           await saveSettings(hydratedSettings);
         }
       })
@@ -311,6 +558,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const handleDropdownOverflow = (event: Event) => {
+      const { active, bottom = 0 } = (event as CustomEvent<DropdownOverflowDetail>)
+        .detail;
+      const nextOverflow = active
+        ? Math.min(Math.max(0, bottom), MAX_DROPDOWN_OVERFLOW_BOTTOM)
+        : 0;
+
+      setDropdownOverflowBottom(nextOverflow);
+    };
+
+    window.addEventListener("blur-dropdown-overflow", handleDropdownOverflow);
+
+    return () => {
+      window.removeEventListener(
+        "blur-dropdown-overflow",
+        handleDropdownOverflow,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     if (resizeTimeout.current) {
       clearTimeout(resizeTimeout.current);
       resizeTimeout.current = null;
@@ -328,16 +596,17 @@ export default function App() {
           getComputedStyle(document.documentElement).fontSize,
         );
 
-        const preferredSize = getPanelSize(tab, settings, !!updateInfo);
+        const preferredSize = getPanelSize(tab, !!updateInfo);
         const { width, height } = await getClampedPanelSize(
           preferredSize,
           textScale,
         );
+        const windowHeight = height + dropdownOverflowBottom;
 
         const appWindow = getCurrentWindow();
 
         if (!launchWindowPlacementDone.current) {
-          await appWindow.setSize(new LogicalSize(width, height));
+          await appWindow.setSize(new LogicalSize(width, windowHeight));
 
           root.style.width = `${width}px`;
           root.style.height = `${height}px`;
@@ -353,9 +622,9 @@ export default function App() {
         const currentH = currentSize.height / monitorScale;
         const currentW = currentSize.width / monitorScale;
 
-        if (width < currentW || height < currentH) {
+        if (width < currentW || windowHeight < currentH) {
           const snapW = width >= currentW ? width : currentW;
-          const snapH = height >= currentH ? height : currentH;
+          const snapH = windowHeight >= currentH ? windowHeight : currentH;
 
           if (snapW !== currentW || snapH !== currentH) {
             await appWindow.setSize(new LogicalSize(snapW, snapH));
@@ -365,11 +634,11 @@ export default function App() {
           root.style.height = `${height}px`;
 
           resizeTimeout.current = setTimeout(async () => {
-            await appWindow.setSize(new LogicalSize(width, height));
+            await appWindow.setSize(new LogicalSize(width, windowHeight));
             resizeTimeout.current = null;
           }, 320);
         } else {
-          await appWindow.setSize(new LogicalSize(width, height));
+          await appWindow.setSize(new LogicalSize(width, windowHeight));
           root.style.width = `${currentW}px`;
           root.style.height = `${currentH}px`;
 
@@ -382,7 +651,7 @@ export default function App() {
         console.error("Failed to size window:", err);
       }
     })();
-  }, [settings, settingsLoaded, tab, updateInfo]);
+  }, [settings, settingsLoaded, tab, updateInfo, dropdownOverflowBottom]);
 
   useEffect(() => {
     const checkForUpdates = () => {
@@ -408,8 +677,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = settings.theme ?? "dark";
-  }, [settings.theme]);
+    const theme = settings.theme ?? "dark";
+    document.documentElement.dataset.theme = theme;
+    applyAccentTheme(settings.accentColor, theme);
+  }, [settings.accentColor, settings.theme]);
+
+  useEffect(() => {
+    document.documentElement.lang = settings.language;
+    document.documentElement.dir = isRtlLanguage(settings.language)
+      ? "rtl"
+      : "ltr";
+  }, [settings.language]);
 
   const handleTabChange = (nextTab: Tab) => {
     setTab(nextTab);
@@ -432,6 +710,8 @@ export default function App() {
 
       await invoke("reset_settings");
       await clearSavedSettings();
+      await invoke("set_autostart_enabled", { enabled: false }).catch(() => {});
+      await getCurrentWindow().setAlwaysOnTop(DEFAULT_SETTINGS.alwaysOnTop);
 
       lastValidHotkeyRef.current = DEFAULT_SETTINGS.hotkey;
       committedSettingsRef.current = DEFAULT_SETTINGS;
@@ -445,66 +725,66 @@ export default function App() {
     }
   };
 
-  const handlePickPosition = async () => {
-    try {
-      const point = await invoke<{ x: number; y: number }>("pick_position");
-      updateSettings({
-        positionEnabled: true,
-        positionX: point.x,
-        positionY: point.y,
-      });
-    } catch (err) {
-      console.error("Failed to pick position:", err);
-    }
-  };
-
   return (
-    <div className="app-root" data-tab={tab}>
-      <TitleBar
-        tab={tab}
-        setTab={handleTabChange}
-        running={status.running}
-        stopReason={
-          settings.showStopReason && tab === "advanced"
-            ? status.stopReason
-            : null
-        }
-        onRequestClose={handleWindowClose}
-      />
-      {updateInfo && (
-        <UpdateBanner
-          key={`${updateInfo.currentVersion}:${updateInfo.latestVersion}`}
-          currentVersion={updateInfo.currentVersion}
-          latestVersion={updateInfo.latestVersion}
+    <I18nProvider language={settings.language}>
+      <div className="app-root" data-tab={tab}>
+        <TitleBar
+          tab={tab}
+          setTab={handleTabChange}
+          running={status.running}
+          stopReason={
+            settings.showStopReason && (tab === "advanced" || tab === "zones")
+              ? status.stopReason
+              : null
+          }
+          isAlwaysOnTop={settings.alwaysOnTop}
+          onToggleAlwaysOnTop={handleToggleAlwaysOnTop}
+          onRequestClose={handleWindowClose}
         />
-      )}
-      <main className="panel-area">
-        {tab === "simple" && (
-          <SimplePanel settings={settings} update={updateSettings} />
+        {updateInfo && (
+          <UpdateBanner
+            key={`${updateInfo.currentVersion}:${updateInfo.latestVersion}`}
+            currentVersion={updateInfo.currentVersion}
+            latestVersion={updateInfo.latestVersion}
+          />
         )}
-        {tab === "advanced" &&
-          (settings.explanationMode === "off" ? (
-            <AdvancedPanelCompact
-              settings={settings}
-              update={updateSettings}
-              onPickPosition={handlePickPosition}
-            />
-          ) : (
+        <main className="panel-area">
+          {tab === "simple" && (
+            <SimplePanel settings={settings} update={updateSettings} />
+          )}
+          {tab === "advanced" && (
             <AdvancedPanel
               settings={settings}
               update={updateSettings}
-              onPickPosition={handlePickPosition}
+              showInfo={true}
+              running={status.running}
+              activeSequenceIndex={status.activeSequenceIndex}
             />
-          ))}
-        {tab === "settings" && (
-          <SettingsPanel
-            settings={settings}
-            update={updateSettings}
-            appInfo={appInfo}
-            onReset={handleResetSettings}
-          />
-        )}
-      </main>
-    </div>
+          )}
+          {tab === "zones" && (
+            <ZonesPanel
+              settings={settings}
+              update={updateSettings}
+              showInfo={true}
+            />
+          )}
+          {tab === "settings" && (
+            <SettingsPanel
+              settings={settings}
+              update={updateSettings}
+              running={status.running}
+              appInfo={appInfo}
+              onSavePreset={handleSavePreset}
+              onApplyPreset={handleApplyPreset}
+              onUpdatePreset={handleUpdatePreset}
+              onRenamePreset={handleRenamePreset}
+              onDeletePreset={handleDeletePreset}
+              onToggleAlwaysOnTop={handleToggleAlwaysOnTop}
+              onReset={handleResetSettings}
+            />
+          )}
+        </main>
+      </div>
+    </I18nProvider>
   );
 }
