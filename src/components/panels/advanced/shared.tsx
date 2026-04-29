@@ -310,35 +310,90 @@ export function AdvDropdown({
   value,
   options,
   onChange,
+  allowWindowOverflow = false,
+  windowOverflowBottom = 190,
 }: {
   value: string;
   options: readonly { value: string; label: string }[];
   onChange: (value: string) => void;
+  allowWindowOverflow?: boolean;
+  windowOverflowBottom?: number;
 }) {
   const [open, setOpen] = useState(false);
+  const [positioned, setPositioned] = useState(false);
+  const [placement, setPlacement] = useState<"below" | "above">("below");
   const [pos, setPos] = useState({ top: 0, left: 0 });
   const ref = useRef<HTMLDivElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const toggle = () => {
-    setOpen((prev) => !prev);
+    setOpen((prev) => {
+      const next = !prev;
+      if (next) {
+        setPositioned(false);
+      }
+      return next;
+    });
   };
+
+  useEffect(() => {
+    if (!allowWindowOverflow) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent("blur-dropdown-overflow", {
+        detail: {
+          active: open,
+          bottom: open ? windowOverflowBottom : 0,
+        },
+      }),
+    );
+
+    return () => {
+      window.dispatchEvent(
+        new CustomEvent("blur-dropdown-overflow", {
+          detail: {
+            active: false,
+            bottom: 0,
+          },
+        }),
+      );
+    };
+  }, [allowWindowOverflow, open, windowOverflowBottom]);
 
   useLayoutEffect(() => {
     if (!open) return;
 
     const updatePosition = () => {
-      if (ref.current) {
-        const rect = ref.current.getBoundingClientRect();
-        setPos({ top: rect.bottom + 4, left: rect.left });
-      }
+      const trigger = ref.current;
+      if (!trigger) return;
+
+      const rect = trigger.getBoundingClientRect();
+      const menuHeight = menuRef.current?.offsetHeight ?? 0;
+      const spacing = 4;
+
+      const fitsBelow =
+        rect.bottom + spacing + menuHeight <= window.innerHeight;
+      const fitsAbove = rect.top - spacing - menuHeight >= 0;
+      const nextPlacement = !fitsBelow && fitsAbove ? "above" : "below";
+      const top =
+        nextPlacement === "below"
+          ? rect.bottom + spacing
+          : rect.top - spacing - menuHeight;
+      const left = rect.left;
+
+      setPlacement(nextPlacement);
+      setPos({ top, left });
+      setPositioned(true);
     };
 
-    updatePosition();
+    const frame = window.requestAnimationFrame(updatePosition);
     window.addEventListener("resize", updatePosition);
     window.addEventListener("scroll", updatePosition, true);
 
     return () => {
+      window.cancelAnimationFrame(frame);
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
@@ -388,11 +443,15 @@ export function AdvDropdown({
           <div
             ref={menuRef}
             className="adv-dropdown-menu adv-dropdown-menu--portal"
+            aria-hidden={!positioned}
             style={{
               position: "fixed",
               top: pos.top,
               left: pos.left,
-              zIndex: 9999,
+              zIndex: 10000,
+              transform: placement === "above" ? "translateY(-4px)" : "none",
+              visibility: positioned ? "visible" : "hidden",
+              pointerEvents: positioned ? "auto" : "none",
             }}
           >
             {options.map((option) => (

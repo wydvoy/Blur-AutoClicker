@@ -38,16 +38,20 @@ const TitleBar = lazy(() => import("./components/TitleBar"));
 export type Tab = "simple" | "advanced" | "zones" | "settings";
 
 const BACKEND_SETTINGS_SCHEMA_VERSION = 8;
+const MAX_DROPDOWN_OVERFLOW_BOTTOM = 220;
 const OPERATIONAL_SETTING_KEYS = new Set<string>(
   Object.keys(buildPresetSnapshot(DEFAULT_SETTINGS)),
 );
 
-function getPanelSize(tab: Tab, settings: Settings, hasUpdate: boolean) {
+type DropdownOverflowDetail = {
+  active: boolean;
+  bottom?: number;
+};
+
+function getPanelSize(tab: Tab, hasUpdate: boolean) {
   const extra = hasUpdate ? 30 : 0;
   if (tab === "simple") {
-    return settings.rateInputMode === "duration"
-      ? { width: 760, height: 175 + extra }
-      : { width: 640, height: 175 + extra };
+    return { width: 650, height: 175 + extra };
   }
   if (tab === "settings") return { width: 560, height: 720 + extra };
   if (tab === "zones") return { width: 550, height: 400 + extra };
@@ -128,6 +132,7 @@ export default function App() {
     currentVersion: string;
     latestVersion: string;
   } | null>(null);
+  const [dropdownOverflowBottom, setDropdownOverflowBottom] = useState(0);
 
   const hotkeyTimer = useRef<number | null>(null);
   const hotkeyRequestIdRef = useRef(0);
@@ -553,6 +558,27 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    const handleDropdownOverflow = (event: Event) => {
+      const { active, bottom = 0 } = (event as CustomEvent<DropdownOverflowDetail>)
+        .detail;
+      const nextOverflow = active
+        ? Math.min(Math.max(0, bottom), MAX_DROPDOWN_OVERFLOW_BOTTOM)
+        : 0;
+
+      setDropdownOverflowBottom(nextOverflow);
+    };
+
+    window.addEventListener("blur-dropdown-overflow", handleDropdownOverflow);
+
+    return () => {
+      window.removeEventListener(
+        "blur-dropdown-overflow",
+        handleDropdownOverflow,
+      );
+    };
+  }, []);
+
+  useEffect(() => {
     if (resizeTimeout.current) {
       clearTimeout(resizeTimeout.current);
       resizeTimeout.current = null;
@@ -570,16 +596,17 @@ export default function App() {
           getComputedStyle(document.documentElement).fontSize,
         );
 
-        const preferredSize = getPanelSize(tab, settings, !!updateInfo);
+        const preferredSize = getPanelSize(tab, !!updateInfo);
         const { width, height } = await getClampedPanelSize(
           preferredSize,
           textScale,
         );
+        const windowHeight = height + dropdownOverflowBottom;
 
         const appWindow = getCurrentWindow();
 
         if (!launchWindowPlacementDone.current) {
-          await appWindow.setSize(new LogicalSize(width, height));
+          await appWindow.setSize(new LogicalSize(width, windowHeight));
 
           root.style.width = `${width}px`;
           root.style.height = `${height}px`;
@@ -595,9 +622,9 @@ export default function App() {
         const currentH = currentSize.height / monitorScale;
         const currentW = currentSize.width / monitorScale;
 
-        if (width < currentW || height < currentH) {
+        if (width < currentW || windowHeight < currentH) {
           const snapW = width >= currentW ? width : currentW;
-          const snapH = height >= currentH ? height : currentH;
+          const snapH = windowHeight >= currentH ? windowHeight : currentH;
 
           if (snapW !== currentW || snapH !== currentH) {
             await appWindow.setSize(new LogicalSize(snapW, snapH));
@@ -607,11 +634,11 @@ export default function App() {
           root.style.height = `${height}px`;
 
           resizeTimeout.current = setTimeout(async () => {
-            await appWindow.setSize(new LogicalSize(width, height));
+            await appWindow.setSize(new LogicalSize(width, windowHeight));
             resizeTimeout.current = null;
           }, 320);
         } else {
-          await appWindow.setSize(new LogicalSize(width, height));
+          await appWindow.setSize(new LogicalSize(width, windowHeight));
           root.style.width = `${currentW}px`;
           root.style.height = `${currentH}px`;
 
@@ -624,7 +651,7 @@ export default function App() {
         console.error("Failed to size window:", err);
       }
     })();
-  }, [settings, settingsLoaded, tab, updateInfo]);
+  }, [settings, settingsLoaded, tab, updateInfo, dropdownOverflowBottom]);
 
   useEffect(() => {
     const checkForUpdates = () => {
