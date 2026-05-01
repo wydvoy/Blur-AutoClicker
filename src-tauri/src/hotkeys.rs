@@ -710,7 +710,7 @@ pub fn start_hotkey_listener(app: AppHandle) {
 
             let currently_pressed = binding
                 .as_ref()
-                .map(|b| is_hotkey_binding_pressed(b, strict))
+                .map(|binding| is_hotkey_binding_pressed(binding, strict))
                 .unwrap_or(false);
 
             let suppress_until = app

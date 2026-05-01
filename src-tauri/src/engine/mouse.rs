@@ -48,7 +48,7 @@ impl VirtualScreenRect {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MouseEventSpec {
     LeftDown,
     LeftUp,
@@ -364,6 +364,37 @@ pub fn send_batch(down: MouseEventSpec, up: MouseEventSpec, n: usize, hold_ms: u
     platform::send_batch(down, up, n, hold_ms);
 }
 
+fn dispatch_click<FSend, FSleep, FActive>(
+    down: MouseEventSpec,
+    up: MouseEventSpec,
+    hold_ms: u32,
+    click_state: i64,
+    send_event: &mut FSend,
+    sleep_for: &mut FSleep,
+    is_active: &FActive,
+) -> bool
+where
+    FSend: FnMut(MouseEventSpec, i64),
+    FSleep: FnMut(Duration),
+    FActive: Fn() -> bool,
+{
+    if !is_active() {
+        return false;
+    }
+
+    send_event(down, click_state);
+    if hold_ms > 0 {
+        sleep_for(Duration::from_millis(hold_ms as u64));
+        if !is_active() {
+            send_event(up, click_state);
+            return false;
+        }
+    }
+
+    send_event(up, click_state);
+    true
+}
+
 pub fn send_clicks(
     down: MouseEventSpec,
     up: MouseEventSpec,
@@ -382,25 +413,28 @@ pub fn send_clicks(
         return;
     }
 
-    for index in 0..count {
-        if !control.is_active() {
-            return;
-        }
+    let is_active = || control.is_active();
+    let mut send_event = |event, click_state| send_mouse_event(event, click_state);
+    let mut sleep_for = |duration| sleep_interruptible(duration, control);
 
+    for index in 0..count {
         let click_state = if use_double_click_gap {
             (index + 1) as i64
         } else {
             1
         };
 
-        send_mouse_event(down, click_state);
-        if hold_ms > 0 {
-            sleep_interruptible(Duration::from_millis(hold_ms as u64), control);
-            if !control.is_active() {
-                return;
-            }
+        if !dispatch_click(
+            down,
+            up,
+            hold_ms,
+            click_state,
+            &mut send_event,
+            &mut sleep_for,
+            &is_active,
+        ) {
+            return;
         }
-        send_mouse_event(up, click_state);
 
         if index + 1 < count && use_double_click_gap && double_click_delay_ms > 0 {
             sleep_interruptible(Duration::from_millis(double_click_delay_ms as u64), control);
@@ -474,5 +508,82 @@ pub fn smooth_move(
         if i < steps {
             std::thread::sleep(step_dur);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::{Cell, RefCell};
+
+    use super::{dispatch_click, MouseEventSpec};
+
+    #[test]
+    fn dispatch_click_skips_events_when_run_is_already_stopped() {
+        let events = RefCell::new(Vec::new());
+        let mut send_event = |event, click_state| events.borrow_mut().push((event, click_state));
+        let mut sleep_for = |_| {};
+        let is_active = || false;
+
+        let sent = dispatch_click(
+            MouseEventSpec::LeftDown,
+            MouseEventSpec::LeftUp,
+            5,
+            1,
+            &mut send_event,
+            &mut sleep_for,
+            &is_active,
+        );
+
+        assert!(!sent);
+        assert!(events.borrow().is_empty());
+    }
+
+    #[test]
+    fn dispatch_click_releases_button_when_run_stops_during_hold() {
+        let events = RefCell::new(Vec::new());
+        let mut send_event = |event, click_state| events.borrow_mut().push((event, click_state));
+        let active = Cell::new(true);
+        let mut sleep_for = |_| active.set(false);
+        let is_active = || active.get();
+
+        let sent = dispatch_click(
+            MouseEventSpec::LeftDown,
+            MouseEventSpec::LeftUp,
+            5,
+            1,
+            &mut send_event,
+            &mut sleep_for,
+            &is_active,
+        );
+
+        assert!(!sent);
+        assert_eq!(
+            &*events.borrow(),
+            &[(MouseEventSpec::LeftDown, 1), (MouseEventSpec::LeftUp, 1)]
+        );
+    }
+
+    #[test]
+    fn dispatch_click_sends_normal_down_and_up_when_run_stays_active() {
+        let events = RefCell::new(Vec::new());
+        let mut send_event = |event, click_state| events.borrow_mut().push((event, click_state));
+        let mut sleep_for = |_| {};
+        let is_active = || true;
+
+        let sent = dispatch_click(
+            MouseEventSpec::LeftDown,
+            MouseEventSpec::LeftUp,
+            5,
+            2,
+            &mut send_event,
+            &mut sleep_for,
+            &is_active,
+        );
+
+        assert!(sent);
+        assert_eq!(
+            &*events.borrow(),
+            &[(MouseEventSpec::LeftDown, 2), (MouseEventSpec::LeftUp, 2)]
+        );
     }
 }

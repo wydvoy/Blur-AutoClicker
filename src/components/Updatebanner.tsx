@@ -1,6 +1,8 @@
 import { relaunch } from "@tauri-apps/plugin-process";
 import { check } from "@tauri-apps/plugin-updater";
 import { useState } from "react";
+import { useTranslation, type TranslationKey } from "../i18n";
+import UnavailableReason from "./UnavailableReason";
 import "./Updatebanner.css";
 
 interface UpdateBannerProps {
@@ -15,40 +17,41 @@ export default function UpdateBanner({
   latestVersion,
 }: UpdateBannerProps) {
   const [stage, setStage] = useState<UpdateStage>("ready");
-  const [statusText, setStatusText] = useState<string | null>(null);
+  const [statusKey, setStatusKey] = useState<TranslationKey | null>(null);
+  const { t } = useTranslation();
 
   const handleUpdate = async () => {
     try {
       setStage("installing");
-      setStatusText("Preparing update...");
+      setStatusKey("update.preparing");
 
       const update = await check();
       if (!update) {
         setStage("ready");
-        setStatusText("Update is no longer available.");
+        setStatusKey("update.notAvailable");
         return;
       }
 
       await update.downloadAndInstall((event) => {
         switch (event.event) {
           case "Started":
-            setStatusText("Downloading update...");
+            setStatusKey("update.downloading");
             break;
           case "Progress":
-            setStatusText("Installing update...");
+            setStatusKey("update.installing");
             break;
           case "Finished":
-            setStatusText("Update installed. Restart to apply it.");
+            setStatusKey("update.installedRestart");
             break;
         }
       });
 
       setStage("restart-required");
-      setStatusText("Update installed. Restart to apply it.");
+      setStatusKey("update.installedRestart");
     } catch (err) {
       console.error("Failed to install update:", err);
       setStage("error");
-      setStatusText("Update install failed.");
+      setStatusKey("update.installFailed");
     }
   };
 
@@ -58,33 +61,46 @@ export default function UpdateBanner({
     } catch (err) {
       console.error("Failed to relaunch app:", err);
       setStage("error");
-      setStatusText("Restart failed. Please reopen the app manually.");
+      setStatusKey("update.restartFailed");
     }
   };
+
+  const installDisabledReason =
+    stage === "installing"
+      ? statusKey === "update.installing"
+        ? t("update.installAlreadyInstalling")
+        : statusKey === "update.downloading"
+          ? t("update.installAlreadyDownloading")
+          : t("update.installAlreadyPreparing")
+      : undefined;
 
   return (
     <div className="update-banner">
       <span className="update-banner-text-old-version">v{currentVersion}</span>
-      <span className="update-banner-text">to</span>
+      <span className="update-banner-text">{t("update.to")}</span>
       {/* does not need v for version, gets it from gitHub ↓  */}
       <span className="update-banner-text-new-version">{latestVersion}</span>
-      {statusText && (
+      {statusKey && (
         <span className="update-banner-status" data-stage={stage}>
-          {statusText}
+          {t(statusKey)}
         </span>
       )}
       {stage === "restart-required" ? (
         <button className="update-banner-btn" onClick={handleRestart}>
-          Restart to Apply Update
+          {t("update.restartToApply")}
         </button>
       ) : (
-        <button
-          className="update-banner-btn"
-          onClick={handleUpdate}
-          disabled={stage === "installing"}
-        >
-          {stage === "installing" ? "Installing..." : "Download and Install"}
-        </button>
+        <UnavailableReason reason={installDisabledReason}>
+          <button
+            className="update-banner-btn"
+            onClick={handleUpdate}
+            disabled={stage === "installing"}
+          >
+            {stage === "installing"
+              ? t("update.installingButton")
+              : t("update.downloadAndInstall")}
+          </button>
+        </UnavailableReason>
       )}
     </div>
   );

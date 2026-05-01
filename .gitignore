@@ -46,3 +46,10 @@ lerna-debug.log*
 *.csv
 .continue
 .claude/
+
+# -- Local UI test harness --
+test.html
+src/test-main.tsx
+src/TestBed.tsx
+src/tauri-mock-setup.ts
+vite.test.config.ts

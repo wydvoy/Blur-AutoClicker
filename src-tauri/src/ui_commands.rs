@@ -82,7 +82,12 @@ pub fn update_settings(
         || old.corner_stop_tl != settings.corner_stop_tl
         || old.corner_stop_tr != settings.corner_stop_tr
         || old.corner_stop_bl != settings.corner_stop_bl
-        || old.corner_stop_br != settings.corner_stop_br;
+        || old.corner_stop_br != settings.corner_stop_br
+        || old.custom_stop_zone_enabled != settings.custom_stop_zone_enabled
+        || old.custom_stop_zone_x != settings.custom_stop_zone_x
+        || old.custom_stop_zone_y != settings.custom_stop_zone_y
+        || old.custom_stop_zone_width != settings.custom_stop_zone_width
+        || old.custom_stop_zone_height != settings.custom_stop_zone_height;
     drop(old);
 
     *state.settings.lock().unwrap() = settings.clone();
@@ -186,4 +191,20 @@ pub fn get_stats() -> Result<CumulativeStats, String> {
 #[tauri::command]
 pub fn reset_stats() -> Result<CumulativeStats, String> {
     crate::engine::stats::reset_stats()
+}
+
+#[tauri::command]
+pub fn get_autostart_enabled() -> bool {
+    crate::autostart::get_autostart_enabled()
+}
+
+#[tauri::command]
+pub fn set_autostart_enabled(enabled: bool) -> Result<(), String> {
+    crate::autostart::set_autostart_enabled(enabled).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn quit_app(app: AppHandle) {
+    crate::overlay::OVERLAY_THREAD_RUNNING.store(false, std::sync::atomic::Ordering::SeqCst);
+    app.exit(0);
 }
