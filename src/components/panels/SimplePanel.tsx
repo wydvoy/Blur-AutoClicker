@@ -8,6 +8,7 @@ import {
   MOUSE_BUTTON_OPTIONS,
   SETTINGS_LIMITS,
 } from "../../settingsSchema";
+import { isAlphabeticKeyboardKey } from "../../keyboardKeyCase";
 import KeyCaptureInput from "../KeyCaptureInput";
 import { AdvDropdown } from "./advanced/shared";
 import "./SimplePanel.css";
@@ -145,6 +146,15 @@ export default function SimplePanel({ settings, update }: SimplePanelProps) {
     { value: "mouse", label: "Mouse" },
     { value: "keyboard", label: "Key" },
   ] as const;
+  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(settings.keyboardKey);
+  const keyboardKeyCaseIsUpper = settings.keyboardKeyCase === "upper";
+  const keyboardKeyCaseLabel = keyboardKeyCaseIsUpper ? "↑" : "↓";
+  const toggleKeyboardKeyCase = () => {
+    if (!canToggleKeyboardKeyCase) return;
+    update({
+      keyboardKeyCase: keyboardKeyCaseIsUpper ? "lower" : "upper",
+    });
+  };
 
   return (
     <div className="vcontainer simple-panel">
@@ -212,17 +222,37 @@ export default function SimplePanel({ settings, update }: SimplePanelProps) {
               onChange={(value) => update({ mouseButton: value as MouseButton })}
             />
           ) : (
-            <KeyCaptureInput
-              className="simple-key-input"
-              value={settings.keyboardKey}
-              onChange={(key) => update({ keyboardKey: key })}
-              style={{ width: "90px" }}
-              onContextMenu={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                update({ inputType: "mouse" });
-              }}
-            />
+            <>
+              <KeyCaptureInput
+                className="simple-key-input"
+                value={settings.keyboardKey}
+                onChange={(key) => update({ keyboardKey: key })}
+                keyboardKeyCase={settings.keyboardKeyCase}
+                onMouseButtonCapture={(mouseButton) =>
+                  update({ inputType: "mouse", mouseButton })
+                }
+                style={{ width: "90px" }}
+              />
+              <button
+                type="button"
+                className={`simple-key-case-toggle ${
+                  keyboardKeyCaseIsUpper
+                    ? "simple-key-case-toggle--upper"
+                    : "simple-key-case-toggle--lower"
+                }`}
+                aria-label={
+                  keyboardKeyCaseIsUpper
+                    ? "Send letters as uppercase"
+                    : "Send letters as lowercase"
+                }
+                aria-pressed={keyboardKeyCaseIsUpper}
+                title="Toggle keyboard key case"
+                disabled={!canToggleKeyboardKeyCase}
+                onClick={toggleKeyboardKeyCase}
+              >
+                {keyboardKeyCaseLabel}
+              </button>
+            </>
           )}
         </ControlBox>
 

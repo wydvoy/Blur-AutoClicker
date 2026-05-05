@@ -3,6 +3,7 @@ import { DEFAULT_LANGUAGE, isLanguage, type Language } from "./i18n";
 export type ClickInterval = "s" | "m" | "h" | "d";
 export type MouseButton = "Left" | "Middle" | "Right";
 export type InputType = "mouse" | "keyboard";
+export type KeyboardKeyCase = "lower" | "upper";
 export type ClickMode = "Toggle" | "Hold";
 export type TimeLimitUnit = "s" | "m" | "h";
 export type SavedPanel = "simple" | "advanced" | "zones";
@@ -29,6 +30,7 @@ export interface PresetSnapshot {
   clickInterval: ClickInterval;
   inputType: InputType;
   keyboardKey: string;
+  keyboardKeyCase: KeyboardKeyCase;
   mouseButton: MouseButton;
   mode: ClickMode;
   dutyCycleEnabled: boolean;
@@ -86,6 +88,7 @@ export interface Settings extends PresetSnapshot {
   strictHotkeyModifiers: boolean;
   inputType: InputType;
   keyboardKey: string;
+  keyboardKeyCase: KeyboardKeyCase;
   minimizeToTray: boolean;
   theme: Theme;
   alwaysOnTop: boolean;
@@ -132,6 +135,7 @@ export const PRESET_SNAPSHOT_KEYS = [
   "clickInterval",
   "inputType",
   "keyboardKey",
+  "keyboardKeyCase",
   "mouseButton",
   "mode",
   "dutyCycleEnabled",
@@ -252,6 +256,7 @@ export function createDefaultSettings(version: string): Settings {
     strictHotkeyModifiers: false,
     inputType: "mouse" as const,
     keyboardKey: "",
+    keyboardKeyCase: "lower",
     minimizeToTray: false,
     theme: "dark",
     alwaysOnTop: false,
@@ -267,6 +272,7 @@ export function buildPresetSnapshot(settings: Settings): PresetSnapshot {
     clickInterval: settings.clickInterval,
     inputType: settings.inputType,
     keyboardKey: settings.keyboardKey,
+    keyboardKeyCase: settings.keyboardKeyCase,
     mouseButton: settings.mouseButton,
     mode: settings.mode,
     dutyCycleEnabled: settings.dutyCycleEnabled,
@@ -346,6 +352,8 @@ function sanitizePresetSnapshot(
       typeof saved.keyboardKey === "string"
         ? saved.keyboardKey
         : defaults.keyboardKey,
+    keyboardKeyCase:
+      saved.keyboardKeyCase === "upper" ? "upper" : defaults.keyboardKeyCase,
     mouseButton:
       saved.mouseButton === "Middle" || saved.mouseButton === "Right"
         ? saved.mouseButton
@@ -695,6 +703,7 @@ export function sanitizeSettings(
     strictHotkeyModifiers: sanitizeBoolean(saved.strictHotkeyModifiers, defaults.strictHotkeyModifiers),
     inputType: saved.inputType === "keyboard" ? "keyboard" : "mouse",
     keyboardKey: typeof saved.keyboardKey === "string" ? saved.keyboardKey : "",
+    keyboardKeyCase: saved.keyboardKeyCase === "upper" ? "upper" : "lower",
     minimizeToTray: sanitizeBoolean(saved.minimizeToTray, defaults.minimizeToTray),
     alwaysOnTop: sanitizeBoolean(saved.alwaysOnTop, defaults.alwaysOnTop),
     accentColor: sanitizeHexColor(saved.accentColor, defaults.accentColor),

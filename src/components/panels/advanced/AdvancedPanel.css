@@ -250,6 +250,45 @@ input[type="number"]::-webkit-outer-spin-button {
   cursor: pointer;
 }
 
+.adv-key-case-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.875rem;
+  align-self: stretch;
+  border: none;
+  border-left: 1px solid var(--border-subtle);
+  background: transparent;
+  color: var(--text-dim);
+  font-family: 'DMSans', sans-serif;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, opacity 0.15s ease;
+}
+
+.adv-key-case-toggle--upper {
+  font-size: 1.125rem;
+}
+
+.adv-key-case-toggle--lower {
+  font-size: 0.8125rem;
+}
+
+.adv-key-input {
+  font-size: 0.9375rem;
+}
+
+.adv-key-case-toggle:hover:not(:disabled) {
+  background: var(--bg-input);
+  color: var(--text-primary);
+}
+
+.adv-key-case-toggle:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .adv-minmax {
   display: flex;
   align-items: center;

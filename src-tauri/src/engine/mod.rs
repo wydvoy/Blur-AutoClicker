@@ -45,6 +45,7 @@ pub struct ClickerConfig {
     pub edge_stop_left: i32,
     pub input_type: i32,
     pub key_code: u16,
+    pub keyboard_uppercase: bool,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]

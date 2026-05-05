@@ -1,6 +1,7 @@
 import type { MouseButton, Settings } from "../../../store";
 import { useTranslation, type TranslationKey } from "../../../i18n";
 import { MOUSE_BUTTON_OPTIONS } from "../../../settingsSchema";
+import { isAlphabeticKeyboardKey } from "../../../keyboardKeyCase";
 import CadenceInput from "../../CadenceInput";
 import HotkeyCaptureInput from "../../HotkeyCaptureInput";
 import KeyCaptureInput from "../../KeyCaptureInput";
@@ -19,6 +20,15 @@ export default function CadenceSection({ settings, update, showInfo }: Props) {
     { value: "mouse", label: "Mouse" },
     { value: "keyboard", label: "Keyboard" },
   ] as const;
+  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(settings.keyboardKey);
+  const keyboardKeyCaseIsUpper = settings.keyboardKeyCase === "upper";
+  const keyboardKeyCaseLabel = keyboardKeyCaseIsUpper ? "↑" : "↓";
+  const toggleKeyboardKeyCase = () => {
+    if (!canToggleKeyboardKeyCase) return;
+    update({
+      keyboardKeyCase: keyboardKeyCaseIsUpper ? "lower" : "upper",
+    });
+  };
 
   return (
     <div className="adv-sectioncontainer adv-basic-card">
@@ -137,21 +147,39 @@ export default function CadenceSection({ settings, update, showInfo }: Props) {
           ) : (
             <div className="adv-textbox">
               <KeyCaptureInput
-                className="adv-textbox-text"
+                className="adv-textbox-text adv-key-input"
                 value={settings.keyboardKey}
                 onChange={(key) => update({ keyboardKey: key })}
+                keyboardKeyCase={settings.keyboardKeyCase}
+                onMouseButtonCapture={(mouseButton) =>
+                  update({ inputType: "mouse", mouseButton })
+                }
                 style={{
                   background: "transparent",
                   border: "none",
                   outline: "none",
                   width: "100px",
                 }}
-                onContextMenu={(event) => {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  update({ inputType: "mouse" });
-                }}
               />
+              <button
+                type="button"
+                className={`adv-key-case-toggle ${
+                  keyboardKeyCaseIsUpper
+                    ? "adv-key-case-toggle--upper"
+                    : "adv-key-case-toggle--lower"
+                }`}
+                aria-label={
+                  keyboardKeyCaseIsUpper
+                    ? "Send letters as uppercase"
+                    : "Send letters as lowercase"
+                }
+                aria-pressed={keyboardKeyCaseIsUpper}
+                title="Toggle keyboard key case"
+                disabled={!canToggleKeyboardKeyCase}
+                onClick={toggleKeyboardKeyCase}
+              >
+                {keyboardKeyCaseLabel}
+              </button>
             </div>
           )}
         </div>

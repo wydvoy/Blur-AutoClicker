@@ -1,16 +1,27 @@
-import { useEffect, useMemo, useState } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type KeyboardEvent,
+  type MouseEvent,
+} from "react";
 import {
   captureHotkey,
   formatHotkeyForDisplay,
   getKeyboardLayoutMap,
 } from "../hotkeys";
+import { isAlphabeticKeyboardKey } from "../keyboardKeyCase";
+import type { KeyboardKeyCase, MouseButton } from "../store";
 
 interface Props {
   value: string;
   onChange: (next: string) => void;
   className?: string;
-  style?: React.CSSProperties;
-  onContextMenu?: (e: React.MouseEvent<HTMLInputElement>) => void;
+  style?: CSSProperties;
+  keyboardKeyCase?: KeyboardKeyCase;
+  onMouseButtonCapture?: (button: MouseButton) => void;
 }
 
 // Bare modifier presses can't serve as the auto-press key — stripping the
@@ -19,14 +30,31 @@ interface Props {
 // keyboardKey in an unusable state. Ignore them and stay in listening mode.
 const MODIFIER_KEYS = new Set(["Control", "Shift", "Alt", "Meta"]);
 
+function applyKeyboardKeyCase(
+  value: string,
+  displayText: string,
+  keyboardKeyCase?: KeyboardKeyCase,
+) {
+  if (!keyboardKeyCase || !isAlphabeticKeyboardKey(value)) {
+    return displayText;
+  }
+
+  return keyboardKeyCase === "upper"
+    ? displayText.toUpperCase()
+    : displayText.toLowerCase();
+}
+
 export default function KeyCaptureInput({
   value,
   onChange,
   className,
   style,
-  onContextMenu,
+  keyboardKeyCase,
+  onMouseButtonCapture,
 }: Props) {
   const [listening, setListening] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const rightClickStartedWhileListeningRef = useRef(false);
   const [layoutMap, setLayoutMap] =
     useState<Awaited<ReturnType<typeof getKeyboardLayoutMap>>>(null);
 
@@ -43,10 +71,14 @@ export default function KeyCaptureInput({
   const displayText = useMemo(() => {
     if (listening) return "Press a key...";
     if (!value) return "Select key";
-    return formatHotkeyForDisplay(value, layoutMap);
-  }, [layoutMap, listening, value]);
+    return applyKeyboardKeyCase(
+      value,
+      formatHotkeyForDisplay(value, layoutMap),
+      keyboardKeyCase,
+    );
+  }, [keyboardKeyCase, layoutMap, listening, value]);
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     event.preventDefault();
     event.stopPropagation();
 
@@ -92,18 +124,46 @@ export default function KeyCaptureInput({
     }
   };
 
+  const handleMouseDown = (event: MouseEvent<HTMLInputElement>) => {
+    if (event.button !== 2) return;
+
+    rightClickStartedWhileListeningRef.current = listening;
+    if (!listening) {
+      event.preventDefault();
+    }
+  };
+
+  const handleContextMenu = (event: MouseEvent<HTMLInputElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (rightClickStartedWhileListeningRef.current) {
+      onMouseButtonCapture?.("Right");
+      setListening(false);
+      inputRef.current?.blur();
+    } else {
+      onChange("");
+      setListening(false);
+      inputRef.current?.blur();
+    }
+
+    rightClickStartedWhileListeningRef.current = false;
+  };
+
   return (
     <input
+      ref={inputRef}
       type="text"
       className={className}
       value={displayText}
       readOnly
+      onMouseDown={handleMouseDown}
       onFocus={() => setListening(true)}
       onBlur={() => setListening(false)}
       onKeyDown={handleKeyDown}
-      onContextMenu={onContextMenu}
+      onContextMenu={handleContextMenu}
       spellCheck={false}
-      title="Click and press a key to select which key gets auto-pressed. Right-click to switch to Mouse mode."
+      title="Right click input to clear"
       style={{
         cursor: "pointer",
         textAlign: "center",

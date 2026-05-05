@@ -14,6 +14,7 @@ export type {
   ClickInterval,
   ClickMode,
   InputType,
+  KeyboardKeyCase,
   MouseButton,
   PresetDefinition,
   PresetId,

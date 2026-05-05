@@ -12,7 +12,7 @@ use crate::ClickerStatusPayload;
 use crate::STATUS_EVENT;
 
 use super::failsafe::should_stop_for_failsafe;
-use super::keyboard::send_key_presses;
+use super::keyboard::{is_alphabetic_vk, send_key_presses};
 use super::mouse::{
     get_button_flags, get_cursor_pos, move_mouse, send_clicks, smooth_move, VirtualScreenRect,
 };
@@ -118,8 +118,16 @@ pub fn start_clicker_inner(app: &AppHandle) -> Result<ClickerStatusPayload, Stri
     if config.input_type == 1 && config.key_code > 0 {
         let hotkey_binding = state.registered_hotkey.lock().unwrap().clone();
         if let Some(binding) = hotkey_binding {
-            if !binding.ctrl && !binding.alt && !binding.shift && !binding.super_key {
-                if binding.main_vk == config.key_code as i32 {
+            if binding.main_vk == config.key_code as i32 {
+                let conflicts_with_plain_key =
+                    !binding.ctrl && !binding.alt && !binding.shift && !binding.super_key;
+                let conflicts_with_uppercase_key = config.keyboard_uppercase
+                    && binding.shift
+                    && !binding.ctrl
+                    && !binding.alt
+                    && !binding.super_key;
+
+                if conflicts_with_plain_key || conflicts_with_uppercase_key {
                     return Err(String::from(
                         "The auto-press key conflicts with your hotkey. Use a modifier on the hotkey (e.g. Ctrl+key) or pick a different key.",
                     ));
@@ -233,6 +241,8 @@ pub fn build_config(settings: &ClickerSettings) -> Result<ClickerConfig, String>
     if is_keyboard && key_code == 0 {
         return Err(String::from("Keyboard mode requires a key to be selected"));
     }
+    let keyboard_uppercase =
+        is_keyboard && settings.keyboard_key_case == "upper" && is_alphabetic_vk(key_code);
 
     let time_limit_secs = if settings.time_limit_enabled {
         Some(match settings.time_limit_unit.as_str() {
@@ -297,6 +307,7 @@ pub fn build_config(settings: &ClickerSettings) -> Result<ClickerConfig, String>
         edge_stop_left: settings.edge_stop_left,
         input_type: if is_keyboard { 1 } else { 0 },
         key_code,
+        keyboard_uppercase,
     })
 }
 
@@ -485,6 +496,7 @@ pub fn start_clicker(config: ClickerConfig, control: RunControl) -> RunOutcome {
                 config.key_code,
                 clicks_this_cycle,
                 hold_ms,
+                config.keyboard_uppercase,
                 config.double_click_enabled,
                 config.double_click_delay_ms,
                 &control,
@@ -603,6 +615,7 @@ mod tests {
             edge_stop_left: 40,
             input_type: 0,
             key_code: 0,
+            keyboard_uppercase: false,
         }
     }
 
@@ -675,5 +688,22 @@ mod tests {
                 clicks: 1
             }
         );
+    }
+
+    #[test]
+    fn keyboard_uppercase_is_enabled_only_for_letter_keys() {
+        let mut settings = sample_settings();
+        settings.input_type = "keyboard".to_string();
+        settings.keyboard_key = "a".to_string();
+        settings.keyboard_key_case = "upper".to_string();
+
+        let config = build_config(&settings).expect("letter key should parse");
+        assert_eq!(config.key_code, b'A' as u16);
+        assert!(config.keyboard_uppercase);
+
+        settings.keyboard_key = "1".to_string();
+        let config = build_config(&settings).expect("digit key should parse");
+        assert_eq!(config.key_code, b'1' as u16);
+        assert!(!config.keyboard_uppercase);
     }
 }
