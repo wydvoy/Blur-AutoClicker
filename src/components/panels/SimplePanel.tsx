@@ -146,7 +146,9 @@ export default function SimplePanel({ settings, update }: SimplePanelProps) {
     { value: "mouse", label: "Mouse" },
     { value: "keyboard", label: "Key" },
   ] as const;
-  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(settings.keyboardKey);
+  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(
+    settings.keyboardKey,
+  );
   const keyboardKeyCaseIsUpper = settings.keyboardKeyCase === "upper";
   const keyboardKeyCaseLabel = keyboardKeyCaseIsUpper ? "↑" : "↓";
   const toggleKeyboardKeyCase = () => {
@@ -219,7 +221,9 @@ export default function SimplePanel({ settings, update }: SimplePanelProps) {
               value={settings.mouseButton}
               options={mouseButtonOptions}
               allowWindowOverflow
-              onChange={(value) => update({ mouseButton: value as MouseButton })}
+              onChange={(value) =>
+                update({ mouseButton: value as MouseButton })
+              }
             />
           ) : (
             <>

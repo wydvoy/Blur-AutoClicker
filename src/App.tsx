@@ -55,7 +55,7 @@ function getPanelSize(tab: Tab, hasUpdate: boolean) {
   }
   if (tab === "settings") return { width: 560, height: 720 + extra };
   if (tab === "zones") return { width: 550, height: 400 + extra };
-  return { width: 860, height: 527 + extra };
+  return { width: 980, height: 527 + extra };
 }
 
 const textScale = await invoke<number>("get_text_scale_factor");
@@ -559,8 +559,9 @@ export default function App() {
 
   useEffect(() => {
     const handleDropdownOverflow = (event: Event) => {
-      const { active, bottom = 0 } = (event as CustomEvent<DropdownOverflowDetail>)
-        .detail;
+      const { active, bottom = 0 } = (
+        event as CustomEvent<DropdownOverflowDetail>
+      ).detail;
       const nextOverflow = active
         ? Math.min(Math.max(0, bottom), MAX_DROPDOWN_OVERFLOW_BOTTOM)
         : 0;

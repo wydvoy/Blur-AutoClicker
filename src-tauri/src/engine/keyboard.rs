@@ -57,20 +57,20 @@ fn should_hold_shift_for_case(vk: u16, uppercase: bool) -> bool {
 
 fn push_key_press(inputs: &mut Vec<INPUT>, vk: u16, use_shift: bool) {
     if use_shift {
-        inputs.push(make_keyboard_input(VK_SHIFT as u16, 0));
+        inputs.push(make_keyboard_input(VK_SHIFT, 0));
     }
 
     inputs.push(make_keyboard_input(vk, 0));
     inputs.push(make_keyboard_input(vk, KEYEVENTF_KEYUP));
 
     if use_shift {
-        inputs.push(make_keyboard_input(VK_SHIFT as u16, KEYEVENTF_KEYUP));
+        inputs.push(make_keyboard_input(VK_SHIFT, KEYEVENTF_KEYUP));
     }
 }
 
 fn send_key_down(vk: u16, use_shift: bool) {
     if use_shift {
-        send_key_event(VK_SHIFT as u16, 0);
+        send_key_event(VK_SHIFT, 0);
     }
     send_key_event(vk, 0);
 }
@@ -78,7 +78,7 @@ fn send_key_down(vk: u16, use_shift: bool) {
 fn send_key_up(vk: u16, use_shift: bool) {
     send_key_event(vk, KEYEVENTF_KEYUP);
     if use_shift {
-        send_key_event(VK_SHIFT as u16, KEYEVENTF_KEYUP);
+        send_key_event(VK_SHIFT, KEYEVENTF_KEYUP);
     }
 }
 

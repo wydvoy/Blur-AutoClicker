@@ -86,7 +86,9 @@ export default function CadenceSection({ settings, update, showInfo }: Props) {
       icon: <KeyboardTargetIcon />,
     },
   ] as const;
-  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(settings.keyboardKey);
+  const canToggleKeyboardKeyCase = isAlphabeticKeyboardKey(
+    settings.keyboardKey,
+  );
   const keyboardKeyCaseIsUpper = settings.keyboardKeyCase === "upper";
   const keyboardKeyCaseLabel = keyboardKeyCaseIsUpper ? "↑" : "↓";
   const toggleKeyboardKeyCase = () => {
@@ -214,7 +216,9 @@ export default function CadenceSection({ settings, update, showInfo }: Props) {
                     update({ mouseButton: mouseButtonOption as MouseButton })
                   }
                 >
-                  {t(`options.mouseButton.${mouseButtonOption}` as TranslationKey)}
+                  {t(
+                    `options.mouseButton.${mouseButtonOption}` as TranslationKey,
+                  )}
                 </button>
               ))}
             </div>
